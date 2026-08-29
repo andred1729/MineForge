@@ -339,12 +339,22 @@ export function createMinecraftMcpServer({
   return server;
 }
 
+const MAX_REQUEST_BYTES = 1_000_000;
+const REQUEST_TIMEOUT_MS = 30_000;
+
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   request.setEncoding('utf8');
   const body = await new Promise<string>((resolve, reject) => {
     let value = '';
+      let size = 0;
+      const timeout = setTimeout(() => request.destroy(new Error('Request timed out.')), REQUEST_TIMEOUT_MS);
     request.on('data', (chunk: string) => {
-      value += chunk;
+      size += Buffer.byteLength(chunk);
+        if (size > MAX_REQUEST_BYTES) {
+          request.destroy(new Error('Request body is too large.'));
+          return;
+        }
+        value += chunk;
     });
     request.on('end', () => {
       resolve(value);
