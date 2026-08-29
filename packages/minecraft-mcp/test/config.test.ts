@@ -18,7 +18,7 @@ describe('Minecraft configuration', () => {
     });
   });
 
-  it('accepts the existing OPEN_AI_KEY spelling for local bootstrap', () => {
+  it('uses OPEN_AI_KEY for local bootstrap', () => {
     const config = loadBootstrapConfig({
       MINECRAFT_MODEL_FQN: 'openai/gpt-5-4-mini',
       OPEN_AI_KEY: 'test-key',
@@ -27,12 +27,11 @@ describe('Minecraft configuration', () => {
     expect(config.openaiApiKey).toBe('test-key');
   });
 
-  it('prefers the standard OPENAI_API_KEY spelling', () => {
+  it('keeps OPENAI_API_KEY as a compatibility fallback', () => {
     const config = loadBootstrapConfig({
       MINECRAFT_MODEL_FQN: 'openai/gpt-5-4-mini',
-      OPENAI_API_KEY: 'standard-key',
-      OPEN_AI_KEY: 'legacy-key',
+      OPENAI_API_KEY: 'fallback-key',
     });
-    expect(config.openaiApiKey).toBe('standard-key');
+    expect(config.openaiApiKey).toBe('fallback-key');
   });
 });

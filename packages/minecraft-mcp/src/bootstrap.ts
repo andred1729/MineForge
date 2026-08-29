@@ -28,7 +28,7 @@ async function ensureModelProvider({
   if (config.openaiApiKey === undefined) {
     if (existing === undefined) {
       throw new Error(
-        'OpenAI is not configured. Set OPENAI_API_KEY in the workspace .env or add OpenAI in the TrueForge console.',
+        'OpenAI is not configured. Set OPEN_AI_KEY in the workspace .env or add OpenAI in the TrueForge console.',
       );
     }
     return;
