@@ -12,14 +12,20 @@ async function waitForTrueForge({ baseUrl, signal }: { baseUrl: string; signal: 
   const healthUrl = `${baseUrl.replace(/\/$/, '')}/healthz`;
   while (!signal.aborted) {
     try {
-      const response = await fetch(healthUrl);
+      const response = await fetch(healthUrl, { signal });
       if (response.ok) {
         return;
       }
     } catch {
       // TrueForge and the bridge start together in the local demo.
     }
-    await new Promise(resolve => setTimeout(resolve, 1_000));
+    await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, 1_000);
+        signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          reject(signal.reason ?? new Error('Aborted'));
+        }, { once: true });
+      });
   }
   throw new Error('Minecraft workforce stopped before TrueForge became ready.');
 }
