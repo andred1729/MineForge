@@ -24,6 +24,8 @@
     "format": "prettier --write . --cache --cache-location .prettiercache --cache-strategy content --config .prettierrc",
     "lint:ci": "eslint . --cache --cache-location .eslintcache",
     "lint": "eslint . --fix --cache --cache-location .eslintcache --cache-strategy content",
+    "minecraft:blueprint:import": "pnpm --filter @minecraft-agent/minecraft-mcp blueprint:import --",
+    "minecraft:blueprint:fixture": "pnpm --filter @minecraft-agent/minecraft-mcp blueprint:fixture",
     "openapi:write": "pnpm --filter @truefoundry/trueforge openapi:write",
     "pack:dry": "pnpm --filter @truefoundry/trueforge-core pack:dry && pnpm --filter @truefoundry/trueforge pack:dry",
     "postinstall": "pnpm --filter @truefoundry/trueforge-core build:gen",

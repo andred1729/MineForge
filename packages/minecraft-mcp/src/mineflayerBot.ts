@@ -2,6 +2,7 @@ import { once } from 'node:events';
 
 import mineflayer, { type Bot } from 'mineflayer';
 import pathfinderPlugin from 'mineflayer-pathfinder';
+import prismarineItem from 'prismarine-item';
 import prismarineViewer from 'prismarine-viewer';
 import { Vec3 } from 'vec3';
 
@@ -31,6 +32,30 @@ function integerPosition(position: Vec3): Position {
 
 function abortError(): Error {
   return new Error('Minecraft action was cancelled.');
+}
+
+async function waitForBlockName({
+  bot,
+  target,
+  expected,
+  signal,
+}: {
+  bot: Bot;
+  target: Vec3;
+  expected: string;
+  signal: AbortSignal;
+}): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    if (signal.aborted) {
+      throw abortError();
+    }
+    if (bot.blockAt(target)?.name === expected) {
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  throw new Error(`Minecraft did not confirm ${expected} at ${target.toString()}.`);
 }
 
 export async function runAbortable<T>({
@@ -440,15 +465,23 @@ export class MineflayerBot implements MinecraftBotPort {
       }
       assertAuthorized();
       const target = new Vec3(origin.x + operation.dx, origin.y + operation.dy, origin.z + operation.dz);
-      const existing = bot.blockAt(target);
+      let existing = bot.blockAt(target);
       if (existing?.name === operation.block || (operation.block === 'air' && existing?.name === 'air')) {
         completed += 1;
         continue;
       }
 
-      await this.moveTo({ target: integerPosition(target), range: 3, plan, signal, assertAuthorized });
+      await this.moveForBlueprintTarget({ target, plan, signal, assertAuthorized });
+      existing = bot.blockAt(target);
+      if (existing === null) {
+        throw new Error(`Target chunk is not loaded at ${target.toString()}.`);
+      }
+      if (existing.name === operation.block || (operation.block === 'air' && existing.name === 'air')) {
+        completed += 1;
+        continue;
+      }
       if (operation.block === 'air') {
-        if (existing === null || existing.name === 'air') {
+        if (existing.name === 'air') {
           completed += 1;
           continue;
         }
@@ -463,10 +496,7 @@ export class MineflayerBot implements MinecraftBotPort {
           },
         });
       } else {
-        const item = bot.inventory.items().find(candidate => candidate.name === operation.block);
-        if (item === undefined) {
-          throw new Error(`Missing ${operation.block} in inventory after ${String(completed)} blueprint operations.`);
-        }
+        const item = await this.ensureBlueprintItem({ blockName: operation.block, signal, assertAuthorized });
         assertAuthorized();
         await runAbortable({
           signal,
@@ -491,6 +521,7 @@ export class MineflayerBot implements MinecraftBotPort {
             bot.clearControlStates();
           },
         });
+        await waitForBlockName({ bot, target, expected: operation.block, signal });
       }
       completed += 1;
       details.push(`${operation.block} at ${target.toString()}`);
@@ -535,8 +566,91 @@ export class MineflayerBot implements MinecraftBotPort {
       return;
     }
     bot.pathfinder.stop();
+    bot.creative.stopFlying();
     bot.stopDigging();
     bot.clearControlStates();
+  }
+
+  private async moveForBlueprintTarget({
+    target,
+    plan,
+    signal,
+    assertAuthorized,
+  }: {
+    target: Vec3;
+    plan: Plan;
+    signal: AbortSignal;
+    assertAuthorized: () => void;
+  }): Promise<void> {
+    const bot = this.requireBot();
+    if (bot.game.gameMode !== 'creative') {
+      await this.moveTo({ target: integerPosition(target), range: 3, plan, signal, assertAuthorized });
+      return;
+    }
+
+    const destination = new Vec3(target.x + 0.5, target.y + 2.5, target.z + 0.5);
+    const cruisingY = Math.max(bot.entity.position.y, destination.y);
+    const waypoints = [
+      new Vec3(bot.entity.position.x, cruisingY, bot.entity.position.z),
+      new Vec3(destination.x, cruisingY, destination.z),
+      destination,
+    ];
+    for (const waypoint of waypoints) {
+      assertAuthorized();
+      if (!isPositionWithinPlanBounds({ plan, position: integerPosition(waypoint) })) {
+        throw new Error('Creative build flight would leave the approved plan radius.');
+      }
+      await runAbortable({
+        signal,
+        operation: async () => {
+          await bot.creative.flyTo(waypoint);
+        },
+        stop: () => {
+          bot.creative.stopFlying();
+          bot.clearControlStates();
+        },
+      });
+    }
+  }
+
+  private async ensureBlueprintItem({
+    blockName,
+    signal,
+    assertAuthorized,
+  }: {
+    blockName: string;
+    signal: AbortSignal;
+    assertAuthorized: () => void;
+  }) {
+    const bot = this.requireBot();
+    const existing = bot.inventory.items().find(candidate => candidate.name === blockName);
+    if (existing !== undefined) {
+      return existing;
+    }
+    if (bot.game.gameMode !== 'creative') {
+      throw new Error(`Missing ${blockName} in inventory.`);
+    }
+    const itemType = bot.registry.itemsByName[blockName];
+    if (itemType === undefined) {
+      throw new Error(`Minecraft 1.21.4 has no placeable item named ${blockName}.`);
+    }
+    const Item = prismarineItem(bot.registry);
+    assertAuthorized();
+    await runAbortable({
+      signal,
+      operation: async () => {
+        await bot.creative.setInventorySlot(36, new Item(itemType.id, itemType.stackSize));
+      },
+      stop: () => {
+        bot.clearControlStates();
+      },
+    });
+    bot.setQuickBarSlot(0);
+    const created = bot.inventory.slots[36];
+    if (created?.name !== blockName) {
+      throw new Error(`Minecraft rejected the creative ${blockName} material stack.`);
+    }
+    return created;
   }
 
   async say(message: string): Promise<void> {

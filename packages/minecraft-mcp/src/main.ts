@@ -1,6 +1,7 @@
 import { MinecraftActionQueue } from './actionQueue.js';
 import { loadMinecraftConfig } from './config.js';
 import { MinecraftEventController } from './controller.js';
+import { BlueprintCatalog } from './grabcraftBlueprint.js';
 import { createMinecraftMcpServer, startMinecraftMcpHttpServer } from './mcpServer.js';
 import { MineflayerBot } from './mineflayerBot.js';
 import { PlanStore } from './planStore.js';
@@ -39,6 +40,7 @@ export async function main(): Promise<void> {
   });
   const planStore = new PlanStore();
   const actionQueue = new MinecraftActionQueue();
+  const blueprintCatalog = new BlueprintCatalog(config.stateDirectory);
 
   let controller: MinecraftEventController | null = null;
   const mcpHttpServer = startMinecraftMcpHttpServer({
@@ -49,6 +51,7 @@ export async function main(): Promise<void> {
         bot,
         planStore,
         actionQueue,
+        blueprintCatalog,
       }),
   });
 

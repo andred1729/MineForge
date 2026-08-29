@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { MinecraftActionQueue } from './actionQueue.js';
 import type { MinecraftBotPort } from './botPort.js';
 import { BeginPlanInputSchema, BlueprintSchema, PlanOutcomeSchema, PositionSchema } from './domain.js';
+import { BlueprintCatalog, type ImportedBlueprint } from './grabcraftBlueprint.js';
 import { PlanStore } from './planStore.js';
 
 const FORBIDDEN_BLUEPRINT_BLOCKS = new Set([
@@ -23,6 +24,9 @@ const FORBIDDEN_BLUEPRINT_BLOCKS = new Set([
 ]);
 
 const PlanIdSchema = z.string().min(1);
+const BlueprintIdSchema = z.string().regex(/^[a-z0-9-]+$/);
+const BlueprintDigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
+const BLUEPRINT_BATCH_SIZE = 128;
 
 function jsonToolResult(value: unknown) {
   return {
@@ -108,14 +112,42 @@ function validateBlueprint({
   return plan;
 }
 
+function validateImportedBlueprintBounds({
+  planStore,
+  plan,
+  blueprint,
+}: {
+  planStore: PlanStore;
+  plan: ReturnType<PlanStore['require']>;
+  blueprint: ImportedBlueprint;
+}): void {
+  const binding = plan.blueprint;
+  if (binding === undefined) {
+    throw new Error('The approved plan is not bound to an imported blueprint.');
+  }
+  if (binding.origin.y < -64 || binding.origin.y + blueprint.dimensions.y - 1 > 319) {
+    throw new Error('Blueprint exceeds the Minecraft overworld build height.');
+  }
+  for (const dx of [0, blueprint.dimensions.x - 1]) {
+    for (const dz of [0, blueprint.dimensions.z - 1]) {
+      planStore.assertWithinBounds({
+        plan,
+        position: { x: binding.origin.x + dx, y: binding.origin.y, z: binding.origin.z + dz },
+      });
+    }
+  }
+}
+
 export function createMinecraftMcpServer({
   bot,
   planStore,
   actionQueue,
+  blueprintCatalog = new BlueprintCatalog('.data'),
 }: {
   bot: MinecraftBotPort;
   planStore: PlanStore;
   actionQueue: MinecraftActionQueue;
+  blueprintCatalog?: BlueprintCatalog;
 }): McpServer {
   const server = new McpServer({ name: 'minecraft-agent', version: '0.1.0' });
 
@@ -132,6 +164,44 @@ export function createMinecraftMcpServer({
   );
 
   server.registerTool(
+    'inspect_blueprint',
+    {
+      description:
+        'Inspect an imported complex blueprint before approval, including its immutable digest, footprint, materials, batches, and intentionally skipped blocks.',
+      inputSchema: z.object({ blueprint_id: BlueprintIdSchema.default('grabcraft-small-modern-villa') }),
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ blueprint_id: blueprintId }) =>
+      await executeTool(async () => {
+        const blueprint = await blueprintCatalog.load(blueprintId);
+        const botPosition = bot.position();
+        return {
+          blueprint: {
+            id: blueprint.id,
+            title: blueprint.title,
+            author: blueprint.author,
+            source_url: blueprint.sourceUrl,
+            digest: blueprint.digest,
+            dimensions: blueprint.dimensions,
+            source_block_count: blueprint.sourceBlockCount,
+            supported_block_count: blueprint.supportedBlockCount,
+            skipped_block_count: blueprint.skippedBlockCount,
+            batch_size: BLUEPRINT_BATCH_SIZE,
+            batch_count: Math.ceil(blueprint.blocks.length / BLUEPRINT_BATCH_SIZE),
+            material_counts: blueprint.materialCounts,
+            layer_counts: blueprint.layerCounts,
+            skipped_materials: blueprint.skippedMaterials,
+            recommended_origin: {
+              x: botPosition.x - Math.floor(blueprint.dimensions.x / 2),
+              y: botPosition.y,
+              z: botPosition.z - Math.floor(blueprint.dimensions.z / 2),
+            },
+          },
+        };
+      }),
+  );
+
+  server.registerTool(
     'begin_plan',
     {
       description:
@@ -141,6 +211,24 @@ export function createMinecraftMcpServer({
     },
     async input =>
       await executeTool(async () => {
+        if (input.blueprint !== undefined) {
+          const blueprint = await blueprintCatalog.load(input.blueprint.blueprint_id);
+          if (blueprint.digest !== input.blueprint.digest) {
+            throw new Error('Blueprint digest does not match the imported artifact. Inspect it again before approval.');
+          }
+          const prospectivePlan = {
+            id: 'prospective',
+            summary: input.summary,
+            steps: input.steps,
+            permittedActions: input.permitted_actions,
+            origin: bot.position(),
+            radiusBlocks: input.radius_blocks,
+            createdAt: 0,
+            expiresAt: Number.MAX_SAFE_INTEGER,
+            blueprint: input.blueprint,
+          };
+          validateImportedBlueprintBounds({ planStore, plan: prospectivePlan, blueprint });
+        }
         const plan = planStore.begin({ input, origin: bot.position() });
         await bot.say(`Approved plan started: ${plan.summary}`);
         return { plan };
@@ -264,6 +352,63 @@ export function createMinecraftMcpServer({
             signal: activeSignal,
             assertAuthorized: () => planStore.require({ planId, action: 'build' }),
           });
+        },
+      }),
+  );
+
+  server.registerTool(
+    'execute_blueprint_batch',
+    {
+      description:
+        'Build one deterministic batch from an approved imported blueprint. Repeating a batch is safe because already-correct blocks are verified and skipped.',
+      inputSchema: z.object({
+        plan_id: PlanIdSchema,
+        blueprint_id: BlueprintIdSchema,
+        digest: BlueprintDigestSchema,
+        batch_index: z.number().int().min(0),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    },
+    async ({ plan_id: planId, blueprint_id: blueprintId, digest, batch_index: batchIndex }, extra) =>
+      await executeActionTool({
+        signal: extra.signal,
+        bot,
+        planStore,
+        actionQueue,
+        operation: async activeSignal => {
+          const plan = planStore.require({ planId, action: 'build' });
+          const binding = plan.blueprint;
+          if (binding?.blueprint_id !== blueprintId || binding.digest !== digest) {
+            throw new Error('Blueprint request does not match the exact artifact approved in begin_plan.');
+          }
+          const blueprint = await blueprintCatalog.load(blueprintId);
+          if (blueprint.digest !== digest) {
+            throw new Error('Imported blueprint changed after approval. Inspect it and begin a new plan.');
+          }
+          validateImportedBlueprintBounds({ planStore, plan, blueprint });
+          const batchCount = Math.ceil(blueprint.blocks.length / BLUEPRINT_BATCH_SIZE);
+          if (batchIndex >= batchCount) {
+            throw new Error(`batch_index must be less than ${String(batchCount)}.`);
+          }
+          const batch = blueprint.blocks
+            .slice(batchIndex * BLUEPRINT_BATCH_SIZE, (batchIndex + 1) * BLUEPRINT_BATCH_SIZE)
+            .map(({ dx, dy, dz, block }) => ({ dx, dy, dz, block }));
+          validateBlueprint({ planStore, planId, origin: binding.origin, blocks: batch });
+          const progress = await bot.executeBlueprint({
+            origin: binding.origin,
+            blocks: batch,
+            plan,
+            signal: activeSignal,
+            assertAuthorized: () => planStore.require({ planId, action: 'build' }),
+          });
+          return {
+            ...progress,
+            blueprint_id: blueprintId,
+            digest,
+            batch_index: batchIndex,
+            batch_count: batchCount,
+            next_batch_index: batchIndex + 1 < batchCount ? batchIndex + 1 : null,
+          };
         },
       }),
   );

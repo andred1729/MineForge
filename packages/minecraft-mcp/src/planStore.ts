@@ -27,6 +27,7 @@ export class PlanStore {
       radiusBlocks: input.radius_blocks,
       createdAt,
       expiresAt: createdAt + input.duration_minutes * 60_000,
+      blueprint: input.blueprint,
     };
     this.activePlan = plan;
     return plan;
