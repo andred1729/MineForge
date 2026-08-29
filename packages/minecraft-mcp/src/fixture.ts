@@ -11,6 +11,7 @@ const commands = [
   'fill -8 100 -8 8 107 8 air',
   'fill 6 100 -2 6 105 2 oak_log',
   'tp ForgeBot 0 100 0',
+  'clear ForgeBot',
   'give ForgeBot wooden_axe 1',
 ];
 
