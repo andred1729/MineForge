@@ -12,18 +12,60 @@ export type ExternalTurnSyncConfig = {
   intervalMs?: number;
 };
 
+type SyncBaseline = string | null | undefined;
+
+async function newestTurnId({
+  server,
+  sessionId,
+  isCancelled,
+}: {
+  server: AgentUIServer;
+  sessionId: string;
+  isCancelled: () => boolean;
+}): Promise<string | null> {
+  let pageToken: string | undefined;
+  let newestId: string | null = null;
+  const seenPageTokens = new Set<string>();
+
+  do {
+    const page = await server.listTurns({
+      sessionId,
+      limit: 100,
+      ...(pageToken === undefined ? {} : { pageToken }),
+    });
+    if (isCancelled()) {
+      return newestId;
+    }
+    newestId = page.data.at(-1)?.id ?? newestId;
+    pageToken = page.nextPageToken;
+    if (pageToken !== undefined) {
+      if (seenPageTokens.has(pageToken)) {
+        throw new Error('Turn pagination returned a repeated page token.');
+      }
+      seenPageTokens.add(pageToken);
+    }
+  } while (pageToken !== undefined);
+
+  return newestId;
+}
+
 export function ExternalTurnSync({ server, config }: { server: AgentUIServer; config: ExternalTurnSyncConfig }) {
   const remoteId = useAuiState(state => state.threadListItem.remoteId);
   const isLoading = useAuiState(state => state.thread.isLoading);
+  const localTurnId = useAuiState(state => {
+    for (let index = state.thread.messages.length - 1; index >= 0; index -= 1) {
+      const custom = state.thread.messages[index]?.metadata.custom as { turnId?: unknown } | undefined;
+      if (typeof custom?.turnId === 'string') {
+        return custom.turnId;
+      }
+    }
+    return null;
+  });
   const isRunning = useThreadIsRunning();
   const reload = useTrueFoundryReload();
   const reloadRef = useRef(reload);
-  const latestTurnIdRef = useRef<string | null | undefined>(undefined);
+  const baselineBySessionRef = useRef(new Map<string, SyncBaseline>());
   reloadRef.current = reload;
-
-  useEffect(() => {
-    latestTurnIdRef.current = undefined;
-  }, [remoteId]);
 
   useEffect(() => {
     if (remoteId == null || isRunning || isLoading) {
@@ -31,7 +73,7 @@ export function ExternalTurnSync({ server, config }: { server: AgentUIServer; co
     }
     const intervalMs = Math.max(config.intervalMs ?? 1_000, 250);
     let cancelled = false;
-      let requestInFlight = false;
+    let requestInFlight = false;
 
     const poll = async () => {
       if (cancelled || requestInFlight || document.visibilityState !== 'visible') {
@@ -39,28 +81,26 @@ export function ExternalTurnSync({ server, config }: { server: AgentUIServer; co
       }
       requestInFlight = true;
       try {
-        const page = await server.listTurns({ sessionId: remoteId, limit: 100 });
-          // listTurns is chronological; retrieve all pages and use the final row.
-          let newestTurnId = page.data.at(-1)?.id ?? null;
-          let nextPageToken = page.nextPageToken;
-          while (nextPageToken !== undefined) {
-            const nextPage = await server.listTurns({ sessionId: remoteId, limit: 100, pageToken: nextPageToken });
-            newestTurnId = nextPage.data.at(-1)?.id ?? newestTurnId;
-            nextPageToken = nextPage.nextPageToken;
-          }
+        const newestId = await newestTurnId({ server, sessionId: remoteId, isCancelled: () => cancelled });
         if (cancelled) {
           return;
         }
-        
-        if (latestTurnIdRef.current === undefined) {
-          
+
+        const baseline = baselineBySessionRef.current.get(remoteId);
+        if (baseline === undefined) {
+          baselineBySessionRef.current.set(remoteId, newestId);
           return;
         }
-        if (latestTurnIdRef.current !== newestTurnId) {
-          
-          await reloadRef.current();
-            
+        if (baseline === newestId) {
+          return;
         }
+        if (localTurnId === newestId) {
+          baselineBySessionRef.current.set(remoteId, newestId);
+          return;
+        }
+
+        await reloadRef.current();
+        baselineBySessionRef.current.set(remoteId, newestId);
       } catch {
         // External synchronization is best-effort and must never disrupt chat.
       } finally {
@@ -81,7 +121,7 @@ export function ExternalTurnSync({ server, config }: { server: AgentUIServer; co
       window.clearInterval(interval);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [config.intervalMs, isLoading, isRunning, remoteId, server]);
+  }, [config.intervalMs, isLoading, isRunning, localTurnId, remoteId, server]);
 
   return null;
 }
