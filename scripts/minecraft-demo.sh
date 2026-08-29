@@ -53,7 +53,7 @@ curl --fail --silent http://localhost:3000/ >/dev/null
 echo 'TrueForge console: http://localhost:3000'
 echo 'Minecraft spectator: http://127.0.0.1:3007'
 echo 'Java client: localhost:25565'
-echo 'In Minecraft: run /spawn to create ForgeBot1 through ForgeBot5.'
+echo 'In Minecraft: run /spawn lumber-jack, /spawn hunter, or another supported role.'
 while kill -0 "$trueforge_pid" 2>/dev/null && kill -0 "$bridge_pid" 2>/dev/null; do
   sleep 1
 done

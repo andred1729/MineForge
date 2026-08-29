@@ -1,6 +1,12 @@
 import { MinecraftActionQueue } from './actionQueue.js';
 import type { MinecraftBotPort } from './botPort.js';
-import { createBotIdentity, type BotIdentity } from './botRoles.js';
+import {
+  BOT_ROLES,
+  createBotIdentityForRole,
+  roleActivationMessage,
+  type BotIdentity,
+  type BotRole,
+} from './botRoles.js';
 import { PlanStore } from './planStore.js';
 import type { TrueForgeSessionPort } from './trueforgePort.js';
 import type { TrueForgeProvisionerPort } from './trueforgeProvisioner.js';
@@ -32,6 +38,7 @@ export interface SpawnedBot {
 
 interface ActiveBot extends WorkforceBotContext {
   controller: SessionMirrorPort;
+  session: TrueForgeSessionPort;
 }
 
 export interface SessionMirrorPort {
@@ -91,8 +98,8 @@ export class WorkforceManager {
     }
   }
 
-  spawn(): Promise<SpawnedBot> {
-    const result = this.spawnSequence.then(async () => await this.spawnNext());
+  spawn(role: BotRole): Promise<SpawnedBot> {
+    const result = this.spawnSequence.then(async () => await this.spawnRole(role));
     this.spawnSequence = result.then(
       () => undefined,
       () => undefined,
@@ -102,6 +109,15 @@ export class WorkforceManager {
 
   rollback(username: string): Promise<boolean> {
     const result = this.spawnSequence.then(async () => await this.rollbackLatest(username));
+    this.spawnSequence = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  ready(username: string): Promise<boolean> {
+    const result = this.spawnSequence.then(async () => await this.initializeSession(username));
     this.spawnSequence = result.then(
       () => undefined,
       () => undefined,
@@ -146,18 +162,21 @@ export class WorkforceManager {
     );
   }
 
-  private async spawnNext(): Promise<SpawnedBot> {
+  private async spawnRole(role: BotRole): Promise<SpawnedBot> {
     const state = this.requireState();
-    if (state.bots.length >= this.options.maxBots || state.nextOrdinal > this.options.maxBots) {
+    if (state.bots.some(record => record.role === role)) {
+      throw new WorkforceCapacityError(`The ${role} ForgeBot is already active.`);
+    }
+    if (state.bots.length >= this.options.maxBots) {
       throw new WorkforceCapacityError(
         `The Minecraft workforce already has its ${String(this.options.maxBots)} bot maximum.`,
       );
     }
-    const identity = createBotIdentity(state.nextOrdinal);
+    const identity = createBotIdentityForRole(role);
     const active = await this.activate({ identity });
     const nextState: WorkforceState = {
       version: 1,
-      nextOrdinal: identity.ordinal + 1,
+      nextOrdinal: this.nextAvailableOrdinal([...state.bots, active.record]),
       bots: [...state.bots, active.record],
     };
     try {
@@ -186,7 +205,7 @@ export class WorkforceManager {
     }
     const nextState: WorkforceState = {
       version: 1,
-      nextOrdinal: record.ordinal,
+      nextOrdinal: this.nextAvailableOrdinal(state.bots.slice(0, -1)),
       bots: state.bots.slice(0, -1),
     };
     await saveWorkforceState({ directory: this.options.stateDirectory, state: nextState });
@@ -198,6 +217,24 @@ export class WorkforceManager {
     await active.bot.close();
     console.log(`Rolled back unplaced ${record.username}.`);
     return true;
+  }
+
+  private async initializeSession(username: string): Promise<boolean> {
+    const active = [...this.activeBots.values()].find(entry => entry.record.username === username);
+    if (active === undefined) {
+      return false;
+    }
+    if ((await active.session.latestTurn()) !== null) {
+      return true;
+    }
+    await active.session.createUserTurn(roleActivationMessage(active.record));
+    return true;
+  }
+
+  private nextAvailableOrdinal(records: WorkforceBotRecord[]): number {
+    const occupied = new Set(records.map(record => record.ordinal));
+    const availableIndex = BOT_ROLES.findIndex((_, index) => !occupied.has(index + 1));
+    return availableIndex === -1 ? 6 : availableIndex + 1;
   }
 
   private async activate({
@@ -232,7 +269,7 @@ export class WorkforceManager {
         },
       });
       await controller.start();
-      const active: ActiveBot = { record, bot, planStore, actionQueue, controller };
+      const active: ActiveBot = { record, bot, planStore, actionQueue, controller, session };
       this.activeBots.set(identity.slug, active);
       console.log(
         `${identity.username} (${identity.role}) attached to ${this.options.consoleBaseUrl.replace(/\/$/, '')}/sessions/${record.sessionId}`,

@@ -18,7 +18,7 @@ The command starts or reuses `minecraft-agent-server`, launches TrueForge and th
 - Browser spectator: `http://127.0.0.1:3007`
 - Java Edition 1.21.4 multiplayer: `localhost:25565`
 
-The Minecraft server is deliberately in offline mode and bound to localhost. Do not publish port 25565. In Minecraft, run `/spawn` up to five times to create `ForgeBot1` through `ForgeBot5`; each bot gets its own TrueForge agent and session. Bot prompts belong in the TrueForge console, while the bots mirror progress into Minecraft chat.
+The Minecraft server is deliberately in offline mode and bound to localhost. Do not publish port 25565. In Minecraft, choose a role explicitly with `/spawn lumber-jack`, `/spawn miner`, `/spawn builder`, `/spawn hunter`, or `/spawn scout`. Each role maps to one stable ForgeBot and its own TrueForge agent and session. Bot prompts belong in the TrueForge console, while the bots mirror progress into Minecraft chat.
 
 `pnpm minecraft:server:reset` permanently removes only the `minecraft-agent-server` container and `minecraft-agent-world` Docker volume before recreating them on natural terrain. The separate `minecraft-agent-skins` volume is retained so the classic Steve skin remains cached.
 
@@ -34,6 +34,6 @@ The workforce manager provisions a connector, agent, and durable session when ea
 
 ## Demo
 
-Run `/spawn` in Minecraft, select the new ForgeBot session in TrueForge, and assign its task there. The agent inspects the world and calls `begin_plan`; TrueForge pauses before that tool executes. Approve once in the console, then watch the bot act without repeated approvals. Use the console stop control to cancel movement and invalidate the plan.
+Run a role-scoped `/spawn` command in Minecraft, then select its role-labelled session in TrueForge. The first durable turn records the starting kit: the Lumberjack gets a stone axe and reports nearby trees before asking for wood type and quantity; the Hunter gets an iron sword and shield, lists the nearest eligible animals, and asks what to hunt. Assign the actual task in that console session. The agent calls `begin_plan`; TrueForge pauses before that tool executes. Approve once, then watch the bot act without repeated approvals. Use the console stop control to cancel movement and invalidate the plan.
 
-The hunter slice supports bounded food hunting for unnamed adult cows, pigs, sheep, and chickens. It excludes players, babies, named or attached animals, hostile combat, explosives, arbitrary server commands, sandboxes, and subagents.
+The Hunter connector exposes `locate_entities`, `locate_animals`, and `hunt_animals`. It can find and pursue unnamed adult cows, pigs, sheep, and chickens inside approved bounds. Sword attacks are rejected when another living entity is within sweep range. Players, babies, named or attached animals, hostile combat, explosives, arbitrary server commands, sandboxes, and subagents remain excluded.

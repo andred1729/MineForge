@@ -6,8 +6,8 @@ description: Creates TrueForge-controlled Mineflayer workers through /spawn.
 softdepend: [SkinsRestorer]
 commands:
   spawn:
-    description: Spawn the next TrueForge-controlled ForgeBot.
-    usage: /spawn
+    description: Spawn a role-scoped TrueForge-controlled ForgeBot.
+    usage: /spawn <lumber-jack|miner|builder|hunter|scout>
     permission: minecraftagent.spawn
 permissions:
   minecraftagent.spawn:

@@ -4,6 +4,7 @@ import { startSpawnServer } from '../src/spawnServer.js';
 import { WorkforceCapacityError } from '../src/workforceManager.js';
 
 const FORM = new URLSearchParams({
+  role: 'lumberjack',
   requester_name: 'DemoPlayer',
   requester_uuid: '123e4567-e89b-12d3-a456-426614174000',
   world_name: 'world',
@@ -23,6 +24,7 @@ describe('Minecraft spawn ingress', () => {
       port: 0,
       token: 'test-token-at-least-16-characters',
       rollback: async () => false,
+      ready: async () => false,
       spawn: async request => {
         requests.push(request.requester_name);
         return {
@@ -59,6 +61,7 @@ describe('Minecraft spawn ingress', () => {
       port: 0,
       token: 'test-token-at-least-16-characters',
       rollback: async () => false,
+      ready: async () => false,
       spawn: async () => {
         throw new WorkforceCapacityError('Five bots are already active.');
       },
@@ -90,6 +93,7 @@ describe('Minecraft spawn ingress', () => {
         rolledBack.push(username);
         return true;
       },
+      ready: async () => false,
     });
     await server.listen();
     try {
@@ -107,6 +111,35 @@ describe('Minecraft spawn ingress', () => {
       });
       expect(accepted.status).toBe(204);
       expect(rolledBack).toEqual(['ForgeBot1']);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('authenticates and forwards the post-kit ready signal', async () => {
+    const initialized: string[] = [];
+    const server = startSpawnServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token-at-least-16-characters',
+      spawn: async () => {
+        throw new Error('Unexpected spawn.');
+      },
+      rollback: async () => false,
+      ready: async username => {
+        initialized.push(username);
+        return true;
+      },
+    });
+    await server.listen();
+    try {
+      const response = await fetch(`http://127.0.0.1:${String(server.port())}/spawn/ready`, {
+        method: 'POST',
+        headers: { 'x-minecraft-agent-token': 'test-token-at-least-16-characters' },
+        body: new URLSearchParams({ username: 'ForgeBot4' }),
+      });
+      expect(response.status).toBe(204);
+      expect(initialized).toEqual(['ForgeBot4']);
     } finally {
       await server.close();
     }

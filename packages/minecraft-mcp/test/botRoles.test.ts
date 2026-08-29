@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createBotIdentity } from '../src/botRoles.js';
+import { createBotIdentity, createBotIdentityForRole, roleActivationMessage } from '../src/botRoles.js';
 
 describe('bot role slots', () => {
   it('assigns deterministic identities and roles to the five demo bots', () => {
@@ -19,5 +19,12 @@ describe('bot role slots', () => {
       expect.objectContaining({ ordinal: 5, username: 'ForgeBot5', role: 'scout' }),
     ]);
     expect(() => createBotIdentity(6)).toThrow('limited to five');
+  });
+
+  it('maps an explicitly selected role to its stable bot and session activation label', () => {
+    const hunter = createBotIdentityForRole('hunter');
+
+    expect(hunter).toMatchObject({ ordinal: 4, username: 'ForgeBot4', role: 'hunter' });
+    expect(roleActivationMessage(hunter)).toBe('Hunter — ForgeBot4 · given an iron sword');
   });
 });

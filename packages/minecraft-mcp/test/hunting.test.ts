@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { isVerifiedAnimalDrop, selectHuntableAnimals, type HuntCandidate } from '../src/hunting.js';
+import {
+  hasSafeSwordClearance,
+  isVerifiedAnimalDrop,
+  selectHuntableAnimals,
+  type HuntCandidate,
+} from '../src/hunting.js';
 
 function candidate(overrides: Partial<HuntCandidate> = {}): HuntCandidate {
   return {
@@ -61,5 +66,17 @@ describe('safe animal selection', () => {
     expect(isVerifiedAnimalDrop({ species: 'chicken', itemName: 'feather' })).toBe(true);
     expect(isVerifiedAnimalDrop({ species: 'cow', itemName: 'cooked_beef' })).toBe(true);
     expect(isVerifiedAnimalDrop({ species: 'pig', itemName: 'leather' })).toBe(false);
+  });
+
+  it('permits a sword attack only when no other living entity is in sweep range', () => {
+    const target = { id: 1, type: 'animal', isValid: true, position: { x: 4, y: 64, z: 0 } };
+    expect(hasSafeSwordClearance({ targetId: 1, targetPosition: target.position, entities: [target] })).toBe(true);
+    expect(
+      hasSafeSwordClearance({
+        targetId: 1,
+        targetPosition: target.position,
+        entities: [target, { id: 2, type: 'player', isValid: true, position: { x: 5, y: 64, z: 0 } }],
+      }),
+    ).toBe(false);
   });
 });

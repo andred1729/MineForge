@@ -15,7 +15,7 @@ export const BotIdentitySchema = z.object({
 });
 export type BotIdentity = z.infer<typeof BotIdentitySchema>;
 
-const ROLE_SLOTS: readonly BotRole[] = ['lumberjack', 'miner', 'builder', 'hunter', 'scout'];
+export const BOT_ROLES: readonly BotRole[] = ['lumberjack', 'miner', 'builder', 'hunter', 'scout'];
 const ROLE_LABELS: Record<BotRole, string> = {
   lumberjack: 'Lumberjack',
   miner: 'Miner',
@@ -31,7 +31,7 @@ export function demoWorksitesForRole(role: BotRole): Position[] {
 }
 
 export function createBotIdentity(ordinal: number): BotIdentity {
-  const role = ROLE_SLOTS[ordinal - 1];
+  const role = BOT_ROLES[ordinal - 1];
   if (role === undefined) {
     throw new Error('The Minecraft workforce is limited to five bots.');
   }
@@ -45,6 +45,21 @@ export function createBotIdentity(ordinal: number): BotIdentity {
     connectorName: `minecraft-${slug}`,
     agentName: `${slug}-${role}`,
   });
+}
+
+export function createBotIdentityForRole(role: BotRole): BotIdentity {
+  return createBotIdentity(BOT_ROLES.indexOf(role) + 1);
+}
+
+export function roleActivationMessage(identity: BotIdentity): string {
+  const equipment: Record<BotRole, string> = {
+    lumberjack: 'given a stone axe',
+    miner: 'given an iron pickaxe',
+    builder: 'given building supplies',
+    hunter: 'given an iron sword',
+    scout: 'given a compass and spyglass',
+  };
+  return `${roleLabel(identity.role)} — ${identity.username} · ${equipment[identity.role]}`;
 }
 
 export function roleLabel(role: BotRole): string {

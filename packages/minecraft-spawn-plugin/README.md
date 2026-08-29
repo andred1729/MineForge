@@ -1,6 +1,6 @@
 # Minecraft `/spawn` Paper plugin
 
-This server-only Paper plugin turns the literal `/spawn` command into a request for the local Minecraft bot manager. No client mod is required.
+This server-only Paper plugin turns `/spawn <role>` into a request for the local Minecraft bot manager. Supported commands are `/spawn lumber-jack`, `/spawn miner`, `/spawn builder`, `/spawn hunter`, and `/spawn scout`. No client mod is required.
 
 ## Spawn control contract
 
@@ -13,6 +13,7 @@ X-Minecraft-Agent-Token: <MINECRAFT_SPAWN_TOKEN>
 The body uses `application/x-www-form-urlencoded` and contains:
 
 ```text
+role
 requester_uuid
 requester_name
 world_uuid
@@ -24,15 +25,15 @@ yaw
 pitch
 ```
 
-The host bot manager is authoritative for capacity and identity allocation. It must reserve the lowest available name from `ForgeBot1` through `ForgeBot5`, create that bot's TrueForge connector, agent, and session, wait for the bot to join, and then return:
+The host bot manager is authoritative for identity allocation. Each role has a stable identity: Lumberjack is `ForgeBot1`, Miner is `ForgeBot2`, Builder is `ForgeBot3`, Hunter is `ForgeBot4`, and Scout is `ForgeBot5`. The manager creates that bot's TrueForge connector, agent, and session, waits for the bot to join, and then returns:
 
 - `201 text/plain` with exactly `ForgeBotN` on success.
-- `409` when five bots are already active.
+- `409` when the selected role is already active or workforce capacity is reached.
 - Another non-2xx status when creation fails; it must release any reservation and disconnect partial bot state.
 
 The plugin performs the HTTP call off the Paper main thread. After success it returns to the main thread, finds safe natural ground near the request coordinates, teleports the bot, grants its role-specific demo kit, and applies the classic skin through SkinsRestorer.
 
-Only one placement can be in flight at a time. If the bot cannot join, the world or natural ground is unavailable, or Paper rejects the teleport, the plugin sends an authenticated form POST to `/spawn/rollback` with `username=ForgeBotN`. The manager disconnects that latest bot, removes its durable workforce record, and makes the slot available again.
+Only one placement can be in flight at a time. If the bot cannot join, the world or natural ground is unavailable, or Paper rejects the teleport, the plugin sends an authenticated form POST to `/spawn/rollback` with `username=ForgeBotN`. The manager disconnects that latest bot, removes its durable workforce record, and makes the role available again. After Paper grants the role-specific kit, it posts `/spawn/ready`; the manager then creates the role-labelled first TrueForge turn.
 
 ## Local configuration
 

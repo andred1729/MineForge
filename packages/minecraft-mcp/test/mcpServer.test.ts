@@ -272,7 +272,8 @@ describe('Minecraft MCP server', () => {
       completed: count,
       details: ['Killed unnamed cow; collected 2 beef, 1 leather.'],
     }));
-    bot.locateAnimals = () => [{ id: 42, species: 'cow', distance: 6, position: { x: 6, y: 64, z: 0 } }];
+    bot.locateAnimals = ({ species }) =>
+      species === 'cow' ? [{ id: 42, species: 'cow', distance: 6, position: { x: 6, y: 64, z: 0 } }] : [];
     bot.huntAnimals = huntAnimals;
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const server = createMinecraftMcpServer({
@@ -286,7 +287,14 @@ describe('Minecraft MCP server', () => {
     await client.connect(clientTransport);
 
     const catalog = await client.listTools();
-    expect(catalog.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(['locate_animals', 'hunt_animals']));
+    expect(catalog.tools.map(tool => tool.name)).toEqual(
+      expect.arrayContaining(['locate_entities', 'locate_animals', 'hunt_animals']),
+    );
+    expect(catalog.tools.map(tool => tool.name)).not.toEqual(expect.arrayContaining(['locate_trees', 'harvest_tree']));
+    const nearest = TextResultSchema.parse(
+      await client.callTool({ name: 'locate_entities', arguments: { max_distance: 16, limit: 2 } }),
+    );
+    expect(JSON.parse(firstText(nearest))).toMatchObject({ entities: [{ id: 42, species: 'cow' }] });
     const located = TextResultSchema.parse(
       await client.callTool({ name: 'locate_animals', arguments: { species: 'cow', max_distance: 16 } }),
     );

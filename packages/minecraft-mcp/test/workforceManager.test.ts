@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { WorldObservation } from '../src/botPort.js';
-import type { BotIdentity } from '../src/botRoles.js';
+import { BotRoleSchema, type BotIdentity } from '../src/botRoles.js';
 import type { TrueForgeSessionPort } from '../src/trueforgePort.js';
 import type { TrueForgeProvisionerPort } from '../src/trueforgeProvisioner.js';
 import {
@@ -80,10 +80,12 @@ function managerOptions({
   stateDirectory,
   provisioner,
   identities,
+  sessions = [],
 }: {
   stateDirectory: string;
   provisioner: TrueForgeProvisionerPort;
   identities: BotIdentity[];
+  sessions?: TrueForgeSessionPort[];
 }): WorkforceManagerOptions {
   return {
     stateDirectory,
@@ -94,13 +96,17 @@ function managerOptions({
       identities.push(identity);
       return fakeBot(identity);
     },
-    createSessionClient: () => fakeSession(),
+    createSessionClient: () => {
+      const session = fakeSession();
+      sessions.push(session);
+      return session;
+    },
     createController: () => ({ start: async () => undefined, close: async () => undefined }),
   };
 }
 
 describe('Minecraft workforce manager', () => {
-  it('serializes concurrent spawns into five unique role slots', async () => {
+  it('serializes concurrent explicit roles into their stable bot identities', async () => {
     const identities: BotIdentity[] = [];
     const provisioner: TrueForgeProvisionerPort = {
       ensureProvider: async () => undefined,
@@ -113,17 +119,21 @@ describe('Minecraft workforce manager', () => {
       managerOptions({ stateDirectory: await temporaryDirectory(), provisioner, identities }),
     );
     await manager.start();
-    const spawned = await Promise.all(Array.from({ length: 5 }, async () => await manager.spawn()));
+    const spawned = await Promise.all(
+      ['hunter', 'lumberjack', 'builder', 'scout', 'miner'].map(
+        async role => await manager.spawn(BotRoleSchema.parse(role)),
+      ),
+    );
 
     expect(spawned.map(bot => [bot.username, bot.role])).toEqual([
-      ['ForgeBot1', 'lumberjack'],
-      ['ForgeBot2', 'miner'],
-      ['ForgeBot3', 'builder'],
       ['ForgeBot4', 'hunter'],
+      ['ForgeBot1', 'lumberjack'],
+      ['ForgeBot3', 'builder'],
       ['ForgeBot5', 'scout'],
+      ['ForgeBot2', 'miner'],
     ]);
     expect(new Set(identities.map(identity => identity.slug)).size).toBe(5);
-    await expect(manager.spawn()).rejects.toBeInstanceOf(WorkforceCapacityError);
+    await expect(manager.spawn('hunter')).rejects.toBeInstanceOf(WorkforceCapacityError);
     await manager.close();
   });
 
@@ -137,7 +147,7 @@ describe('Minecraft workforce manager', () => {
       managerOptions({ stateDirectory, provisioner: firstProvisioner, identities: [] }),
     );
     await first.start();
-    await first.spawn();
+    await first.spawn('lumberjack');
     await first.close();
 
     const restoredRecords: string[] = [];
@@ -176,7 +186,7 @@ describe('Minecraft workforce manager', () => {
       }),
     );
     await initial.start();
-    await initial.spawn();
+    await initial.spawn('lumberjack');
     await initial.close();
 
     const restored = new WorkforceManager(
@@ -212,14 +222,45 @@ describe('Minecraft workforce manager', () => {
       }),
     );
     await manager.start();
-    await manager.spawn();
-    await manager.spawn();
+    await manager.spawn('lumberjack');
+    await manager.spawn('hunter');
 
     await expect(manager.rollback('ForgeBot1')).resolves.toBe(false);
-    await expect(manager.rollback('ForgeBot2')).resolves.toBe(true);
+    await expect(manager.rollback('ForgeBot4')).resolves.toBe(true);
     expect(manager.list().map(bot => bot.username)).toEqual(['ForgeBot1']);
     expect(await loadWorkforceState(stateDirectory)).toMatchObject({ nextOrdinal: 2 });
-    await expect(manager.spawn()).resolves.toMatchObject({ username: 'ForgeBot2' });
+    await expect(manager.spawn('hunter')).resolves.toMatchObject({ username: 'ForgeBot4' });
+    await manager.close();
+  });
+
+  it('starts one role-labelled TrueForge turn only after the plugin reports the kit ready', async () => {
+    const stateDirectory = await temporaryDirectory();
+    const turns: string[] = [];
+    const session: TrueForgeSessionPort = {
+      latestTurn: async () => null,
+      createUserTurn: async message => {
+        turns.push(message);
+        return { id: 'turn', status: 'running', hasRequiredActions: false, responseText: null };
+      },
+      cancelActiveTurn: async () => undefined,
+    };
+    const manager = new WorkforceManager({
+      ...managerOptions({
+        stateDirectory,
+        provisioner: {
+          ensureProvider: async () => undefined,
+          provisionBot: async () => ({ agentId: 'agent-4', sessionId: 'session-4' }),
+        },
+        identities: [],
+      }),
+      createSessionClient: () => session,
+    });
+    await manager.start();
+    await manager.spawn('hunter');
+
+    expect(turns).toEqual([]);
+    await expect(manager.ready('ForgeBot4')).resolves.toBe(true);
+    expect(turns).toEqual(['Hunter — ForgeBot4 · given an iron sword']);
     await manager.close();
   });
 });

@@ -4,11 +4,8 @@ import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-record BotIdentity(String username, int slot, String role) {
+record BotIdentity(String username, int slot, BotRole role) {
   private static final Pattern USERNAME = Pattern.compile("ForgeBot([1-5])");
-  private static final String[] ROLES = {
-    "Lumberjack", "Miner", "Builder", "Hunter", "Scout"
-  };
 
   static Optional<BotIdentity> parse(String responseBody) {
     String candidate = responseBody.trim();
@@ -17,6 +14,6 @@ record BotIdentity(String username, int slot, String role) {
       return Optional.empty();
     }
     int slot = Integer.parseInt(matcher.group(1));
-    return Optional.of(new BotIdentity(candidate, slot, ROLES[slot - 1]));
+    return Optional.of(new BotIdentity(candidate, slot, BotRole.forSlot(slot)));
   }
 }

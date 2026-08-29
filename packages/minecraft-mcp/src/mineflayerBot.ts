@@ -10,6 +10,7 @@ import type { ActionProgress, MinecraftBotPort, NearbyBlock, NearbyEntity, World
 import { splitChatMessage } from './chat.js';
 import type { BlueprintBlock, Plan, Position } from './domain.js';
 import {
+  hasSafeSwordClearance,
   isVerifiedAnimalDrop,
   selectHuntableAnimals,
   type HuntableAnimal,
@@ -559,22 +560,7 @@ export class MineflayerBot implements MinecraftBotPort {
     assertAuthorized: () => void;
   }): Promise<ActionProgress> {
     const bot = this.requireBot();
-    const weapon = ['netherite_axe', 'diamond_axe', 'iron_axe', 'stone_axe', 'wooden_axe', 'golden_axe']
-      .map(itemName => bot.inventory.items().find(item => item.name === itemName))
-      .find(item => item !== undefined);
-    if (weapon === undefined) {
-      throw new Error('The hunter requires an axe before hunting animals.');
-    }
-    assertAuthorized();
-    await runAbortable({
-      signal,
-      operation: async () => {
-        await bot.equip(weapon, 'hand');
-      },
-      stop: () => {
-        bot.clearControlStates();
-      },
-    });
+    await this.equipHunterSword({ signal, assertAuthorized });
 
     const previousMovements = bot.pathfinder.movements;
     const huntingMovements = new Movements(bot);
@@ -602,7 +588,7 @@ export class MineflayerBot implements MinecraftBotPort {
         }
 
         const inventoryBefore = this.animalDropInventory(species);
-        let killed = false;
+        let deathPosition: Position | null = null;
         let lastPosition = integerPosition(target.position);
         for (let attackNumber = 0; attackNumber < 16; attackNumber += 1) {
           assertAuthorized();
@@ -627,6 +613,12 @@ export class MineflayerBot implements MinecraftBotPort {
           if (target.position.distanceTo(bot.entity.position) > 3.5) {
             continue;
           }
+          if (!this.hasClearSwordAttack(target.id)) {
+            details.push(
+              `Stopped pursuing ${species} ${String(target.id)} because another living entity was too close for a safe sword attack.`,
+            );
+            break;
+          }
 
           await runAbortable({
             signal,
@@ -642,12 +634,16 @@ export class MineflayerBot implements MinecraftBotPort {
           if (!this.isEligibleAnimalTarget({ id: target.id, species, maxDistance, plan })) {
             break;
           }
-          killed = await this.attackAndWaitForDeath({ target, signal });
-          if (killed) {
+          if (!this.hasClearSwordAttack(target.id)) {
+            break;
+          }
+          await this.equipHunterSword({ signal, assertAuthorized });
+          deathPosition = await this.attackAndWaitForDeath({ target, signal });
+          if (deathPosition !== null) {
             break;
           }
         }
-        if (!killed) {
+        if (deathPosition === null) {
           details.push(`Stopped pursuing ${species} ${String(target.id)} because a safe kill was not verified.`);
           break;
         }
@@ -655,7 +651,7 @@ export class MineflayerBot implements MinecraftBotPort {
         completed += 1;
         const drops = await this.collectAnimalDrops({
           species,
-          target: lastPosition,
+          target: deathPosition,
           before: inventoryBefore,
           plan,
           signal,
@@ -663,7 +659,7 @@ export class MineflayerBot implements MinecraftBotPort {
         });
         const evidence = drops.length === 0 ? 'no eligible drops reached inventory' : `collected ${drops.join(', ')}`;
         details.push(
-          `Killed unnamed adult ${species} at ${String(lastPosition.x)}, ${String(lastPosition.y)}, ${String(lastPosition.z)}; ${evidence}.`,
+          `Killed unnamed adult ${species} at ${String(deathPosition.x)}, ${String(deathPosition.y)}, ${String(deathPosition.z)}; ${evidence}.`,
         );
       }
     } finally {
@@ -925,16 +921,60 @@ export class MineflayerBot implements MinecraftBotPort {
     );
   }
 
+  private hasClearSwordAttack(targetId: number): boolean {
+    const bot = this.requireBot();
+    const target = bot.entities[targetId];
+    if (target?.isValid !== true) {
+      return false;
+    }
+    return hasSafeSwordClearance({
+      targetId,
+      targetPosition: integerPosition(target.position),
+      entities: Object.values(bot.entities).map(entity => ({
+        id: entity.id,
+        type: entity.type,
+        isValid: entity.isValid,
+        position: integerPosition(entity.position),
+      })),
+    });
+  }
+
+  private async equipHunterSword({
+    signal,
+    assertAuthorized,
+  }: {
+    signal: AbortSignal;
+    assertAuthorized: () => void;
+  }): Promise<void> {
+    const bot = this.requireBot();
+    const weapon = ['netherite_sword', 'diamond_sword', 'iron_sword', 'stone_sword', 'wooden_sword', 'golden_sword']
+      .map(itemName => bot.inventory.items().find(item => item.name === itemName))
+      .find(item => item !== undefined);
+    if (weapon === undefined) {
+      throw new Error('The hunter requires a sword before hunting animals.');
+    }
+    assertAuthorized();
+    await runAbortable({
+      signal,
+      operation: async () => {
+        await bot.equip(weapon, 'hand');
+      },
+      stop: () => {
+        bot.clearControlStates();
+      },
+    });
+  }
+
   private async attackAndWaitForDeath({
     target,
     signal,
   }: {
     target: Bot['entity'];
     signal: AbortSignal;
-  }): Promise<boolean> {
+  }): Promise<Position | null> {
     const bot = this.requireBot();
     let hurtByBot = false;
-    let killedByBot = false;
+    let deathPosition: Position | null = null;
     const handleHurt = (hurtEntity: Bot['entity'], source: { id?: number } | undefined) => {
       if (hurtEntity.id === target.id) {
         hurtByBot = source?.id === bot.entity.id;
@@ -942,7 +982,7 @@ export class MineflayerBot implements MinecraftBotPort {
     };
     const handleDeath = (deadEntity: Bot['entity']) => {
       if (deadEntity.id === target.id && hurtByBot) {
-        killedByBot = true;
+        deathPosition = integerPosition(deadEntity.position);
       }
     };
     bot.on('entityHurt', handleHurt);
@@ -950,7 +990,7 @@ export class MineflayerBot implements MinecraftBotPort {
     try {
       bot.attack(target);
       await wait({ milliseconds: 1_250, signal });
-      return killedByBot;
+      return deathPosition;
     } finally {
       bot.removeListener('entityHurt', handleHurt);
       bot.removeListener('entityDead', handleDeath);

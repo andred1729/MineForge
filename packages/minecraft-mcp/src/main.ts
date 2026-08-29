@@ -81,8 +81,9 @@ export async function main(): Promise<void> {
     host: config.spawnHost,
     port: config.spawnPort,
     token: config.spawnToken,
-    spawn: async () => await workforce.spawn(),
+    spawn: async request => await workforce.spawn(request.role),
     rollback: async username => await workforce.rollback(username),
+    ready: async username => await workforce.ready(username),
   });
 
   try {

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Position } from './domain.js';
 
 export const HuntSpeciesSchema = z.enum(['cow', 'pig', 'sheep', 'chicken']);
+export const HUNT_SPECIES = HuntSpeciesSchema.options;
 export type HuntSpecies = z.infer<typeof HuntSpeciesSchema>;
 
 export interface HuntCandidate {
@@ -22,6 +23,13 @@ export interface HuntableAnimal {
   id: number;
   species: HuntSpecies;
   distance: number;
+  position: Position;
+}
+
+export interface NearbyAttackEntity {
+  id: number;
+  type: string;
+  isValid: boolean;
   position: Position;
 }
 
@@ -84,4 +92,27 @@ export function isVerifiedAnimalDrop({ species, itemName }: { species: HuntSpeci
     return true;
   }
   return DROP_NAMES[species].includes(itemName);
+}
+
+export function hasSafeSwordClearance({
+  targetId,
+  targetPosition,
+  entities,
+}: {
+  targetId: number;
+  targetPosition: Position;
+  entities: NearbyAttackEntity[];
+}): boolean {
+  return entities.every(entity => {
+    if (!entity.isValid || entity.id === targetId || !['animal', 'mob', 'player'].includes(entity.type)) {
+      return true;
+    }
+    return (
+      Math.hypot(
+        targetPosition.x - entity.position.x,
+        targetPosition.y - entity.position.y,
+        targetPosition.z - entity.position.z,
+      ) > 3
+    );
+  });
 }
