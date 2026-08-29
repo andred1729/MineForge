@@ -1,25 +1,21 @@
-import { MinecraftActionQueue } from './actionQueue.js';
-import { loadMinecraftConfig } from './config.js';
-import { MinecraftEventController } from './controller.js';
+import { demoWorksitesForRole } from './botRoles.js';
+import { loadWorkforceConfig } from './config.js';
 import { createMinecraftMcpServer, startMinecraftMcpHttpServer } from './mcpServer.js';
 import { MineflayerBot } from './mineflayerBot.js';
-import { PlanStore } from './planStore.js';
-import { loadBootstrapState } from './state.js';
+import { SessionMirrorController } from './sessionMirrorController.js';
+import { startSpawnServer } from './spawnServer.js';
+import { waitForTrueForge } from './trueforgeHealth.js';
 import { TrueForgeSessionClient } from './trueforgePort.js';
+import { TrueForgeProvisioner } from './trueforgeProvisioner.js';
+import { WorkforceManager } from './workforceManager.js';
 
-async function waitForBootstrapState(directory: string, signal: AbortSignal) {
-  while (!signal.aborted) {
-    const state = await loadBootstrapState(directory);
-    if (state !== null) {
-      return state;
-    }
-    await new Promise(resolve => setTimeout(resolve, 1_000));
-  }
-  throw new Error('Minecraft bridge stopped before TrueForge bootstrap completed.');
+function botSlugFromMcpPath(path: string): string | null {
+  const match = /^\/bots\/(forgebot[1-5])\/mcp$/.exec(path);
+  return match?.[1] ?? null;
 }
 
 export async function main(): Promise<void> {
-  const config = loadMinecraftConfig();
+  const config = loadWorkforceConfig();
   const shutdownController = new AbortController();
   let resolveShutdown: (() => void) | undefined;
   const shutdownPromise = new Promise<void>(resolve => {
@@ -31,63 +27,82 @@ export async function main(): Promise<void> {
   };
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
-  const bot = new MineflayerBot({
-    host: config.minecraftHost,
-    port: config.minecraftPort,
-    username: config.minecraftUsername,
-    version: config.minecraftVersion,
-  });
-  const planStore = new PlanStore();
-  const actionQueue = new MinecraftActionQueue();
 
-  let controller: MinecraftEventController | null = null;
+  const provisioner = new TrueForgeProvisioner({
+    baseUrl: config.trueforgeBaseUrl,
+    ...(config.trueforgeToken === undefined ? {} : { token: config.trueforgeToken }),
+    modelFqn: config.modelFqn,
+    ...(config.openaiApiKey === undefined ? {} : { openaiApiKey: config.openaiApiKey }),
+    mcpPublicBaseUrl: config.mcpPublicBaseUrl,
+  });
+  const workforce = new WorkforceManager({
+    stateDirectory: config.stateDirectory,
+    consoleBaseUrl: config.trueforgeBaseUrl,
+    maxBots: config.maxBots,
+    viewerBasePort: config.viewerPort,
+    provisioner,
+    createBot: identity =>
+      new MineflayerBot({
+        host: config.minecraftHost,
+        port: config.minecraftPort,
+        username: identity.username,
+        version: config.minecraftVersion,
+      }),
+    createSessionClient: record =>
+      new TrueForgeSessionClient({
+        baseUrl: config.trueforgeBaseUrl,
+        ...(config.trueforgeToken === undefined ? {} : { token: config.trueforgeToken }),
+        sessionId: record.sessionId,
+      }),
+    createController: ({ bot, session, onTurnCancelled }) => new SessionMirrorController(bot, session, onTurnCancelled),
+  });
   const mcpHttpServer = startMinecraftMcpHttpServer({
     host: config.mcpHost,
     port: config.mcpPort,
-    createServerForRequest: () =>
-      createMinecraftMcpServer({
-        bot,
-        planStore,
-        actionQueue,
-      }),
+    resolveServerForRequest: path => {
+      const slug = botSlugFromMcpPath(path);
+      if (slug === null) {
+        return null;
+      }
+      const context = workforce.resolveBySlug(slug);
+      return context === null
+        ? null
+        : () =>
+            createMinecraftMcpServer({
+              bot: context.bot,
+              planStore: context.planStore,
+              actionQueue: context.actionQueue,
+              additionalPlanOrigins: demoWorksitesForRole(context.record.role),
+            });
+    },
+  });
+  const spawnServer = startSpawnServer({
+    host: config.spawnHost,
+    port: config.spawnPort,
+    token: config.spawnToken,
+    spawn: async () => await workforce.spawn(),
+    rollback: async username => await workforce.rollback(username),
   });
 
   try {
-    await bot.start();
-    bot.startViewer(config.viewerPort);
     await mcpHttpServer.listen();
-
-    console.log(
-      `ForgeBot joined ${config.minecraftHost}:${String(config.minecraftPort)} as ${config.minecraftUsername}`,
-    );
-    console.log(`Minecraft MCP: http://${config.mcpHost}:${String(config.mcpPort)}/mcp`);
-    console.log(`Browser spectator: http://127.0.0.1:${String(config.viewerPort)}`);
-    console.log('Waiting for an idempotent `pnpm minecraft:bootstrap` if no session state exists.');
-
-    const state = await waitForBootstrapState(config.stateDirectory, shutdownController.signal);
-    const trueforge = new TrueForgeSessionClient({
-      baseUrl: config.trueforgeBaseUrl,
-      ...(config.trueforgeToken === undefined ? {} : { token: config.trueforgeToken }),
-      sessionId: state.sessionId,
-    });
-    controller = new MinecraftEventController(bot, trueforge, 1_000, () => {
-      planStore.invalidate();
-    });
-    await controller.start();
-    console.log(`Minecraft chat is attached to TrueForge session ${state.sessionId}`);
+    console.log(`Bot-scoped Minecraft MCP: ${config.mcpPublicBaseUrl.replace(/\/$/, '')}/bots/{bot}/mcp`);
+    await waitForTrueForge({ baseUrl: config.trueforgeBaseUrl, signal: shutdownController.signal });
+    await workforce.start();
+    await spawnServer.listen();
+    console.log(`Minecraft /spawn ingress: http://${config.spawnHost}:${String(config.spawnPort)}/spawn`);
+    console.log(`TrueForge console: ${config.trueforgeBaseUrl.replace(/\/$/, '')}`);
     await shutdownPromise;
   } finally {
     process.removeListener('SIGINT', shutdown);
     process.removeListener('SIGTERM', shutdown);
-    await controller?.close();
+    await spawnServer.close();
+    await workforce.close();
     await mcpHttpServer.close();
-    planStore.invalidate();
-    bot.stop();
-    await bot.close();
   }
 }
 
 void main().catch((caught: unknown) => {
-  console.error('Minecraft bridge failed', caught);
+  console.error('Minecraft workforce failed', caught);
   process.exitCode = 1;
 });

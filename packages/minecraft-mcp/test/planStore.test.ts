@@ -38,4 +38,24 @@ describe('PlanStore', () => {
     now += 60_001;
     expect(store.current()).toBeNull();
   });
+
+  it('authorizes a bounded corridor to a configured demo worksite', () => {
+    const store = new PlanStore();
+    const plan = store.begin({
+      input: {
+        summary: 'Harvest at the lumber worksite',
+        steps: ['Travel', 'Harvest'],
+        permitted_actions: ['move', 'gather'],
+        duration_minutes: 15,
+        radius_blocks: 8,
+      },
+      origin: { x: 0, y: 64, z: 0 },
+      additionalOrigins: [{ x: 40, y: 66, z: 0 }],
+    });
+
+    expect(isPositionWithinPlanBounds({ plan, position: { x: 20, y: 64, z: 8 } })).toBe(true);
+    expect(isPositionWithinPlanBounds({ plan, position: { x: 40, y: 66, z: 8 } })).toBe(true);
+    expect(isPositionWithinPlanBounds({ plan, position: { x: 20, y: 64, z: 9 } })).toBe(false);
+    expect(isPositionWithinPlanBounds({ plan, position: { x: 49, y: 66, z: 0 } })).toBe(false);
+  });
 });
