@@ -49,9 +49,6 @@ export async function main(): Promise<void> {
         bot,
         planStore,
         actionQueue,
-        onPlanTerminal: event => {
-          console.log(`Plan ${event.planId} ${event.outcome}: ${event.summary}`);
-        },
       }),
   });
 
