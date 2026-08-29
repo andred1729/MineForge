@@ -21,6 +21,20 @@ interface MineflayerBotOptions {
 const { goals, Movements, pathfinder } = pathfinderPlugin;
 const { mineflayer: startMineflayerViewer } = prismarineViewer;
 
+// These blocks have a stable, same-named drop. Do not infer drops from the
+// registry name: e.g. stone and grass_block normally drop other items.
+const GATHERABLE_LOGS = new Set([
+  'acacia_log',
+  'birch_log',
+  'cherry_log',
+  'dark_oak_log',
+  'jungle_log',
+  'mangrove_log',
+  'oak_log',
+  'pale_oak_log',
+  'spruce_log',
+]);
+
 function integerPosition(position: Vec3): Position {
   return {
     x: Math.floor(position.x),
@@ -240,7 +254,10 @@ export class MineflayerBot implements MinecraftBotPort {
     if (blockType === undefined) {
       throw new Error(`Unknown Minecraft block: ${blockName}`);
     }
-    const itemType = bot.registry.itemsByName[blockName];
+    if (!GATHERABLE_LOGS.has(blockName)) {
+        throw new Error(`${blockName} is not a supported gather_blocks resource.`);
+      }
+      const itemType = bot.registry.itemsByName[blockName];
     if (itemType === undefined) {
       throw new Error(`${blockName} does not drop a same-named inventory item supported by gather_blocks.`);
     }
