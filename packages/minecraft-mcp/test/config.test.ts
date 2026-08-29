@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { loadBootstrapConfig, loadMinecraftConfig } from '../src/config.js';
+import { loadMinecraftConfig, loadWorkforceConfig } from '../src/config.js';
 
 describe('Minecraft configuration', () => {
   it('uses safe local defaults', () => {
@@ -8,8 +8,6 @@ describe('Minecraft configuration', () => {
     expect(config).toMatchObject({
       minecraftHost: '127.0.0.1',
       minecraftPort: 25_565,
-      minecraftUsername: 'ForgeBot',
-      minecraftAuth: 'offline',
       minecraftVersion: '1.21.4',
       mcpHost: '127.0.0.1',
       mcpPort: 8_792,
@@ -19,7 +17,7 @@ describe('Minecraft configuration', () => {
   });
 
   it('uses OPEN_AI_KEY for local bootstrap', () => {
-    const config = loadBootstrapConfig({
+    const config = loadWorkforceConfig({
       MINECRAFT_MODEL_FQN: 'openai/gpt-5-4-mini',
       OPEN_AI_KEY: 'test-key',
     });
@@ -28,10 +26,15 @@ describe('Minecraft configuration', () => {
   });
 
   it('keeps OPENAI_API_KEY as a compatibility fallback', () => {
-    const config = loadBootstrapConfig({
+    const config = loadWorkforceConfig({
       MINECRAFT_MODEL_FQN: 'openai/gpt-5-4-mini',
       OPENAI_API_KEY: 'fallback-key',
     });
     expect(config.openaiApiKey).toBe('fallback-key');
+  });
+
+  it('uses the shared local spawn token by default', () => {
+    const config = loadWorkforceConfig({ MINECRAFT_MODEL_FQN: 'openai/gpt-5-4-mini' });
+    expect(config.spawnToken).toBe('minecraft-agent-local-demo');
   });
 });

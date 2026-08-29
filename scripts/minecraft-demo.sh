@@ -13,6 +13,10 @@ if [[ -z "${MINECRAFT_MODEL_FQN:-}" ]]; then
   exit 2
 fi
 
+# Shared only between the local Paper plugin and host bot manager. Override it
+# in .env when the spawn ingress is reachable beyond Docker Desktop.
+export MINECRAFT_SPAWN_TOKEN="${MINECRAFT_SPAWN_TOKEN:-minecraft-agent-local-demo}"
+
 pnpm minecraft:server:up
 pnpm --filter @truefoundry/trueforge-sdk build
 
@@ -34,6 +38,7 @@ bridge_pid=$!
 for _ in $(seq 1 120); do
   if curl --fail --silent http://127.0.0.1:8790/healthz >/dev/null && \
     curl --fail --silent http://127.0.0.1:8792/healthz >/dev/null && \
+    curl --fail --silent http://127.0.0.1:8793/healthz >/dev/null && \
     curl --fail --silent http://localhost:3000/ >/dev/null; then
     break
   fi
@@ -42,13 +47,13 @@ done
 
 curl --fail --silent http://127.0.0.1:8790/healthz >/dev/null
 curl --fail --silent http://127.0.0.1:8792/healthz >/dev/null
+curl --fail --silent http://127.0.0.1:8793/healthz >/dev/null
 curl --fail --silent http://localhost:3000/ >/dev/null
-pnpm --dir packages/minecraft-mcp exec tsx src/bootstrap.ts
-pnpm --dir packages/minecraft-mcp exec tsx src/fixture.ts
 
 echo 'TrueForge console: http://localhost:3000'
 echo 'Minecraft spectator: http://127.0.0.1:3007'
 echo 'Java client: localhost:25565'
+echo 'In Minecraft: run /spawn to create ForgeBot1 through ForgeBot5.'
 while kill -0 "$trueforge_pid" 2>/dev/null && kill -0 "$bridge_pid" 2>/dev/null; do
   sleep 1
 done

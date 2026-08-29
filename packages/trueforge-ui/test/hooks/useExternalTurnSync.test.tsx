@@ -4,10 +4,11 @@ import { act } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ServerProvider } from '@/server/ServerContext.js';
-import type { Turn } from '@/server/types.js';
+import type { Session, Turn } from '@/server/types.js';
 import { createMockAgentUIServer } from '../server/mockServer.js';
 
 const reload = vi.hoisted(() => vi.fn<() => Promise<void>>());
+const reloadThreadList = vi.hoisted(() => vi.fn<() => Promise<void>>());
 const runtimeState = vi.hoisted(() => ({
   remoteId: 'session-1',
   isLoading: false,
@@ -24,6 +25,7 @@ vi.mock('@assistant-ui/core/react', () => ({
 }));
 
 vi.mock('@/assistant-ui.js', () => ({
+  useAui: () => ({ threads: () => ({ reload: reloadThreadList }) }),
   useAuiState: (selector: (state: unknown) => unknown) =>
     selector({
       threadListItem: { remoteId: runtimeState.remoteId },
@@ -46,6 +48,15 @@ function turn(id: string, sessionId = runtimeState.remoteId): Turn {
   };
 }
 
+function session(id: string, updatedAt: string): Session {
+  return {
+    id,
+    isMutable: false,
+    createdAt: '2026-08-29T00:00:00.000Z',
+    updatedAt,
+  };
+}
+
 function renderSync(server: ReturnType<typeof createMockAgentUIServer>) {
   return render(
     <ServerProvider server={server}>
@@ -58,6 +69,7 @@ describe('ExternalTurnSync', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     reload.mockReset().mockResolvedValue();
+    reloadThreadList.mockReset().mockResolvedValue();
     runtimeState.remoteId = 'session-1';
     runtimeState.isLoading = false;
     runtimeState.isRunning = false;
@@ -210,5 +222,51 @@ describe('ExternalTurnSync', () => {
     renderSync(server);
     await act(async () => await vi.advanceTimersByTimeAsync(750));
     expect(reload).toHaveBeenCalledOnce();
+  });
+
+  it('reloads the thread list when an externally created session appears', async () => {
+    let sessions = [session('session-1', '2026-08-29T00:00:00.000Z')];
+    const listSessions = vi.fn(async () => ({ data: sessions }));
+    const server = createMockAgentUIServer({ listSessions });
+    renderSync(server);
+
+    await act(async () => await vi.advanceTimersByTimeAsync(0));
+    expect(reloadThreadList).not.toHaveBeenCalled();
+    expect(listSessions).toHaveBeenCalledWith({ limit: 25, order: 'desc' });
+
+    sessions = [session('session-2', '2026-08-29T00:00:01.000Z'), session('session-1', '2026-08-29T00:00:00.000Z')];
+    await act(async () => await vi.advanceTimersByTimeAsync(250));
+    expect(reloadThreadList).toHaveBeenCalledOnce();
+  });
+
+  it('retries external session discovery when the thread-list reload fails', async () => {
+    let sessions = [session('session-1', '2026-08-29T00:00:00.000Z')];
+    const server = createMockAgentUIServer({ listSessions: async () => ({ data: sessions }) });
+    renderSync(server);
+    await act(async () => await vi.advanceTimersByTimeAsync(0));
+
+    sessions = [session('session-2', '2026-08-29T00:00:01.000Z'), ...sessions];
+    reloadThreadList.mockRejectedValueOnce(new Error('temporary thread-list reload failure'));
+    await act(async () => await vi.advanceTimersByTimeAsync(250));
+    expect(reloadThreadList).toHaveBeenCalledTimes(1);
+
+    await act(async () => await vi.advanceTimersByTimeAsync(250));
+    expect(reloadThreadList).toHaveBeenCalledTimes(2);
+    await act(async () => await vi.advanceTimersByTimeAsync(250));
+    expect(reloadThreadList).toHaveBeenCalledTimes(2);
+  });
+
+  it('discovers sessions while the selected thread is streaming', async () => {
+    runtimeState.isRunning = true;
+    let sessions = [session('session-1', '2026-08-29T00:00:00.000Z')];
+    const listTurns = vi.fn(async () => ({ data: [turn('turn-1')] }));
+    const server = createMockAgentUIServer({ listSessions: async () => ({ data: sessions }), listTurns });
+    renderSync(server);
+    await act(async () => await vi.advanceTimersByTimeAsync(0));
+
+    sessions = [session('session-2', '2026-08-29T00:00:01.000Z'), ...sessions];
+    await act(async () => await vi.advanceTimersByTimeAsync(250));
+    expect(reloadThreadList).toHaveBeenCalledOnce();
+    expect(listTurns).not.toHaveBeenCalled();
   });
 });

@@ -49,9 +49,13 @@ export class TrueForgeSessionClient implements TrueForgeSessionPort {
   private readonly sessionId: string;
 
   async latestTurn(): Promise<TurnSnapshot | null> {
-    const page = await this.client.sessions.listTurns(this.sessionId, { limit: 1 });
-    const turn = page.data[0];
-    return turn === undefined ? null : toSnapshot(turn);
+    const page = await this.client.sessions.listEvents(this.sessionId, { limit: 1 });
+    const newestEvent = page.data[0];
+    if (newestEvent === undefined) {
+      return null;
+    }
+    const turn = await this.client.sessions.getTurn(this.sessionId, newestEvent.turnId);
+    return toSnapshot(turn.data);
   }
 
   async createUserTurn(message: string): Promise<TurnSnapshot> {

@@ -24,8 +24,6 @@ const PortSchema = z.coerce.number().int().min(1).max(65_535);
 export const MinecraftConfigSchema = z.object({
   minecraftHost: z.string().min(1).default('127.0.0.1'),
   minecraftPort: PortSchema.default(25_565),
-  minecraftUsername: z.string().min(1).max(16).default('ForgeBot'),
-  minecraftAuth: z.literal('offline').default('offline'),
   minecraftVersion: z.string().min(1).default('1.21.4'),
   mcpHost: z.string().min(1).default('127.0.0.1'),
   mcpPort: PortSchema.default(8_792),
@@ -42,8 +40,6 @@ export function loadMinecraftConfig(env: NodeJS.ProcessEnv = process.env): Minec
   return MinecraftConfigSchema.parse({
     minecraftHost: env['MC_HOST'],
     minecraftPort: env['MC_PORT'],
-    minecraftUsername: env['MC_USERNAME'],
-    minecraftAuth: env['MC_AUTH'],
     minecraftVersion: env['MC_VERSION'],
     mcpHost: env['MCP_HOST'],
     mcpPort: env['MCP_PORT'],
@@ -54,23 +50,28 @@ export function loadMinecraftConfig(env: NodeJS.ProcessEnv = process.env): Minec
   });
 }
 
-export const BootstrapConfigSchema = z.object({
+export const WorkforceConfigSchema = z.object({
   ...MinecraftConfigSchema.shape,
   modelFqn: z.string().min(1),
   openaiApiKey: z.string().min(1).optional(),
-  agentName: z.string().min(1).default('minecraft-agent'),
-  connectorName: z.string().min(1).default('minecraft'),
+  maxBots: z.coerce.number().int().min(1).max(5).default(5),
+  spawnHost: z.string().min(1).default('0.0.0.0'),
+  spawnPort: PortSchema.default(8_793),
+  spawnToken: z.string().min(16).default('minecraft-agent-local-demo'),
+  mcpPublicBaseUrl: z.url().default('http://127.0.0.1:8792'),
 });
+export type WorkforceConfig = z.infer<typeof WorkforceConfigSchema>;
 
-export type BootstrapConfig = z.infer<typeof BootstrapConfigSchema>;
-
-export function loadBootstrapConfig(env: NodeJS.ProcessEnv = process.env): BootstrapConfig {
+export function loadWorkforceConfig(env: NodeJS.ProcessEnv = process.env): WorkforceConfig {
   loadWorkspaceEnv(env);
-  return BootstrapConfigSchema.parse({
+  return WorkforceConfigSchema.parse({
     ...loadMinecraftConfig(env),
     modelFqn: env['MINECRAFT_MODEL_FQN'],
     openaiApiKey: env['OPEN_AI_KEY'] ?? env['OPENAI_API_KEY'],
-    agentName: env['MINECRAFT_AGENT_NAME'],
-    connectorName: env['MINECRAFT_CONNECTOR_NAME'],
+    maxBots: env['MINECRAFT_MAX_BOTS'],
+    spawnHost: env['MINECRAFT_SPAWN_HOST'],
+    spawnPort: env['MINECRAFT_SPAWN_PORT'],
+    spawnToken: env['MINECRAFT_SPAWN_TOKEN'],
+    mcpPublicBaseUrl: env['MINECRAFT_MCP_PUBLIC_BASE_URL'],
   });
 }
