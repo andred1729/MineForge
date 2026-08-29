@@ -164,6 +164,7 @@ export function App() {
         server={{ type: 'trueforge', baseUrl: '/', fetch: authAwareFetch }}
         layout="sidebar"
         withRouter
+        externalTurnSync={{ intervalMs: 1_000 }}
         agentConfig={{
           mode: 'AgentLibraryWithComposer',
           defaultAgentSpec: boot.defaultAgentSpec,

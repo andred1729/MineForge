@@ -59,6 +59,8 @@ export type TrueForgeUIProps = {
   withRouter?: boolean;
   /** URL path customization; only honored when `withRouter`. */
   routes?: RoutesConfig;
+  /** Poll an idle active session for turns created outside this UI. Disabled by default. */
+  externalTurnSync?: TrueFoundryChatProviderProps['externalTurnSync'];
 };
 
 export type TrueForgeUIShellProps = Omit<TrueForgeUIProps, 'withRouter'> & { resolvedRoutes?: ResolvedRoutes };
