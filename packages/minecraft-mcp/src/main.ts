@@ -88,6 +88,7 @@ export async function main(): Promise<void> {
               planStore: context.planStore,
               actionQueue: context.actionQueue,
               additionalPlanOrigins: demoWorksitesForRole(context.record.role),
+              role: context.record.role,
             });
     },
   });

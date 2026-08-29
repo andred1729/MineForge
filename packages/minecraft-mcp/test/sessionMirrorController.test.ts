@@ -26,9 +26,11 @@ function fakeBot() {
     position: () => observation.position,
     inspect: () => observation,
     locateNaturalTrees: () => [],
+    locateAnimals: () => [],
     moveTo: vi.fn(async () => undefined),
     gather: vi.fn(async ({ count }: { count: number }) => ({ requested: count, completed: count, details: [] })),
     harvestTrees: vi.fn(async ({ count }: { count: number }) => ({ requested: count, completed: count, details: [] })),
+    huntAnimals: vi.fn(async ({ count }: { count: number }) => ({ requested: count, completed: count, details: [] })),
     craft: vi.fn(async ({ count }: { count: number }) => ({ requested: count, completed: count, details: [] })),
     executeBlueprint: vi.fn(async ({ blocks }: { blocks: unknown[] }) => ({
       requested: blocks.length,

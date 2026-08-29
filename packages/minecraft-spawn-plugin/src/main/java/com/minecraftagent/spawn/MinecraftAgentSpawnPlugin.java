@@ -239,7 +239,7 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
         add(bot, Material.TORCH, 32);
       }
       case 4 -> {
-        add(bot, Material.IRON_SWORD, 1);
+        add(bot, Material.IRON_AXE, 1);
         add(bot, Material.SHIELD, 1);
         add(bot, Material.BAKED_POTATO, 16);
       }

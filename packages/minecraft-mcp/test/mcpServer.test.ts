@@ -43,9 +43,11 @@ function fakeBot(): MinecraftBotPort {
     position: () => observation.position,
     inspect: () => observation,
     locateNaturalTrees: () => [],
+    locateAnimals: () => [],
     moveTo: async () => {},
     gather: async ({ count }) => ({ requested: count, completed: count, details: [] }),
     harvestTrees: async ({ count }) => ({ requested: count, completed: count, details: [] }),
+    huntAnimals: async ({ count }) => ({ requested: count, completed: count, details: [] }),
     craft: async ({ count }) => ({ requested: count, completed: count, details: [] }),
     executeBlueprint: async ({ blocks }) => ({ requested: blocks.length, completed: blocks.length, details: [] }),
     drop: async ({ count }) => ({ requested: count, completed: count, details: [] }),
@@ -62,6 +64,7 @@ describe('Minecraft MCP server', () => {
       bot: fakeBot(),
       planStore: new PlanStore(),
       actionQueue: new MinecraftActionQueue(),
+      role: 'lumberjack',
     });
     const client = new Client({ name: 'minecraft-test', version: '1.0.0' });
     await server.connect(serverTransport);
@@ -138,6 +141,7 @@ describe('Minecraft MCP server', () => {
       bot,
       planStore,
       actionQueue: new MinecraftActionQueue(),
+      role: 'lumberjack',
     });
     const client = new Client({ name: 'minecraft-expiry-test', version: '1.0.0' });
     await server.connect(serverTransport);
@@ -200,6 +204,7 @@ describe('Minecraft MCP server', () => {
       planStore: new PlanStore(),
       actionQueue: new MinecraftActionQueue(),
       additionalPlanOrigins: [{ x: -46, y: 66, z: -6 }],
+      role: 'lumberjack',
     });
     const client = new Client({ name: 'minecraft-lumberjack-test', version: '1.0.0' });
     await server.connect(serverTransport);
@@ -260,6 +265,67 @@ describe('Minecraft MCP server', () => {
     await server.close();
   });
 
+  it('exposes hunting only to the hunter and requires an approved hunt plan', async () => {
+    const bot = fakeBot();
+    const huntAnimals = vi.fn<MinecraftBotPort['huntAnimals']>(async ({ count }) => ({
+      requested: count,
+      completed: count,
+      details: ['Killed unnamed cow; collected 2 beef, 1 leather.'],
+    }));
+    bot.locateAnimals = () => [{ id: 42, species: 'cow', distance: 6, position: { x: 6, y: 64, z: 0 } }];
+    bot.huntAnimals = huntAnimals;
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createMinecraftMcpServer({
+      bot,
+      planStore: new PlanStore(),
+      actionQueue: new MinecraftActionQueue(),
+      role: 'hunter',
+    });
+    const client = new Client({ name: 'minecraft-hunter-test', version: '1.0.0' });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const catalog = await client.listTools();
+    expect(catalog.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(['locate_animals', 'hunt_animals']));
+    const located = TextResultSchema.parse(
+      await client.callTool({ name: 'locate_animals', arguments: { species: 'cow', max_distance: 16 } }),
+    );
+    expect(JSON.parse(firstText(located))).toMatchObject({ animals: [{ id: 42, species: 'cow' }] });
+
+    const denied = TextResultSchema.parse(
+      await client.callTool({
+        name: 'hunt_animals',
+        arguments: { plan_id: 'missing', species: 'cow', count: 1, max_distance: 16 },
+      }),
+    );
+    expect(denied.isError).toBe(true);
+
+    const begun = TextResultSchema.parse(
+      await client.callTool({
+        name: 'begin_plan',
+        arguments: {
+          summary: 'Hunt one cow for food',
+          steps: ['Locate an unnamed cow', 'Hunt it', 'Collect the drops'],
+          permitted_actions: ['move', 'hunt'],
+          duration_minutes: 5,
+          radius_blocks: 16,
+        },
+      }),
+    );
+    const parsedPlan = z.object({ plan: z.object({ id: z.string() }) }).parse(JSON.parse(firstText(begun)));
+    const hunted = TextResultSchema.parse(
+      await client.callTool({
+        name: 'hunt_animals',
+        arguments: { plan_id: parsedPlan.plan.id, species: 'cow', count: 1, max_distance: 16 },
+      }),
+    );
+    expect(JSON.parse(firstText(hunted))).toMatchObject({ requested: 1, completed: 1 });
+    expect(huntAnimals).toHaveBeenCalledOnce();
+
+    await client.close();
+    await server.close();
+  });
+
   it('rejects oversized request bodies with HTTP 413 before creating an MCP server', async () => {
     let createdServers = 0;
     const httpServer = startMinecraftMcpHttpServer({
@@ -272,6 +338,7 @@ describe('Minecraft MCP server', () => {
           bot: fakeBot(),
           planStore: new PlanStore(),
           actionQueue: new MinecraftActionQueue(),
+          role: 'lumberjack',
         });
       },
     });
@@ -306,6 +373,7 @@ describe('Minecraft MCP server', () => {
                 bot: fakeBot(),
                 planStore: new PlanStore(),
                 actionQueue: new MinecraftActionQueue(),
+                role: 'lumberjack',
               })
           : null;
       },
@@ -336,6 +404,7 @@ describe('Minecraft MCP server', () => {
           bot: fakeBot(),
           planStore: new PlanStore(),
           actionQueue: new MinecraftActionQueue(),
+          role: 'lumberjack',
         });
       },
     });

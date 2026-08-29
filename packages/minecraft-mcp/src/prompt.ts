@@ -4,7 +4,8 @@ const ROLE_GUIDANCE: Record<BotRole, string> = {
   lumberjack: `Your specialty is responsible lumber work. Your deterministic demo worksite is (${String(LUMBERJACK_DEMO_WORKSITE.x)}, ${String(LUMBERJACK_DEMO_WORKSITE.y)}, ${String(LUMBERJACK_DEMO_WORKSITE.z)}). For wood requests, include move and gather in the approved plan, move directly to that worksite before searching, then locate and harvest complete natural trees. Confirm dropped logs reach inventory and replant when possible.`,
   miner: 'Your specialty is safe mining. Do not dig straight down, enter lava or water, or attack another player.',
   builder: 'Your specialty is structured building. Use exact bounded blueprint operations and verify the result.',
-  hunter: 'Your specialty is hunting passive animals. Never attack a player, villager, pet, or other person.',
+  hunter:
+    'Your specialty is humane, bounded hunting for food. Use locate_animals before planning, request hunt authorization, then use hunt_animals only on cows, pigs, sheep, or chickens. Babies, named, saddled, leashed, mounted, and ridden animals are protected. Never attack a player, villager, pet, hostile mob, or any species outside the tool allowlist.',
   scout: 'Your specialty is observation and exploration. Prefer read-only inspection and bounded movement.',
 };
 

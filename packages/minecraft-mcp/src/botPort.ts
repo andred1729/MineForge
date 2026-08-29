@@ -1,4 +1,5 @@
 import type { BlueprintBlock, Plan, Position } from './domain.js';
+import type { HuntableAnimal, HuntSpecies } from './hunting.js';
 import type { NaturalTree } from './treeHarvest.js';
 
 export interface InventoryItem {
@@ -46,6 +47,7 @@ export interface MinecraftBotPort {
   position(): Position;
   inspect(options: { radius: number }): WorldObservation;
   locateNaturalTrees(options: { blockName: string; maxDistance: number; plan?: Plan }): NaturalTree[];
+  locateAnimals(options: { species: HuntSpecies; maxDistance: number; plan?: Plan }): HuntableAnimal[];
   moveTo(options: {
     target: Position;
     range: number;
@@ -63,6 +65,14 @@ export interface MinecraftBotPort {
   }): Promise<ActionProgress>;
   harvestTrees(options: {
     blockName: string;
+    count: number;
+    maxDistance: number;
+    plan: Plan;
+    signal: AbortSignal;
+    assertAuthorized: () => void;
+  }): Promise<ActionProgress>;
+  huntAnimals(options: {
+    species: HuntSpecies;
     count: number;
     maxDistance: number;
     plan: Plan;

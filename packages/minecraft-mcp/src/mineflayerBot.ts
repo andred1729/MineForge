@@ -9,6 +9,13 @@ import { Vec3 } from 'vec3';
 import type { ActionProgress, MinecraftBotPort, NearbyBlock, NearbyEntity, WorldObservation } from './botPort.js';
 import { splitChatMessage } from './chat.js';
 import type { BlueprintBlock, Plan, Position } from './domain.js';
+import {
+  isVerifiedAnimalDrop,
+  selectHuntableAnimals,
+  type HuntableAnimal,
+  type HuntCandidate,
+  type HuntSpecies,
+} from './hunting.js';
 import { isPositionWithinPlanBounds } from './planStore.js';
 import { findNaturalTrees, type NaturalTree, type TreeWorld } from './treeHarvest.js';
 
@@ -32,6 +39,16 @@ function integerPosition(position: Vec3): Position {
 
 function abortError(): Error {
   return new Error('Minecraft action was cancelled.');
+}
+
+function assertNotAborted(signal: AbortSignal): void {
+  if (signal.aborted) {
+    throw abortError();
+  }
+}
+
+function hasAttachedVehicle(entity: { vehicle?: unknown }): boolean {
+  return entity.vehicle !== null && entity.vehicle !== undefined;
 }
 
 export async function isTcpPortAvailable(port: number): Promise<boolean> {
@@ -268,6 +285,46 @@ export class MineflayerBot implements MinecraftBotPort {
     });
   }
 
+  locateAnimals({
+    species,
+    maxDistance,
+    plan,
+  }: {
+    species: HuntSpecies;
+    maxDistance: number;
+    plan?: Plan;
+  }): HuntableAnimal[] {
+    const bot = this.requireBot();
+    const origin = integerPosition(bot.entity.position);
+    const candidates: HuntCandidate[] = Object.values(bot.entities).map(entity => {
+      const registryEntity = entity.name === undefined ? undefined : bot.registry.entitiesByName[entity.name];
+      const metadataKeys = registryEntity?.metadataKeys ?? [];
+      const metadata = (key: string): unknown => {
+        const index = metadataKeys.indexOf(key);
+        return index === -1 ? undefined : entity.metadata[index];
+      };
+      return {
+        id: entity.id,
+        type: entity.type,
+        ...(entity.name === undefined ? {} : { name: entity.name }),
+        position: integerPosition(entity.position),
+        registryIdentityMatches: registryEntity !== undefined && entity.entityType === registryEntity.id,
+        customNamed: entity.getCustomName() !== null,
+        baby: metadata('baby') === true,
+        saddled: metadata('saddle') === true,
+        attached: hasAttachedVehicle(entity),
+        hasPassengers: entity.passengers.length > 0,
+      };
+    });
+    return selectHuntableAnimals({
+      candidates,
+      species,
+      origin,
+      maxDistance,
+      withinBounds: position => plan === undefined || isPositionWithinPlanBounds({ plan, position }),
+    });
+  }
+
   async moveTo({
     target,
     range,
@@ -474,6 +531,136 @@ export class MineflayerBot implements MinecraftBotPort {
 
     const completed = bot.inventory.count(itemType.id, null) - startingCount;
     details.push(`Verified ${String(completed)} total ${blockName} collected in inventory.`);
+    return { requested: count, completed, details };
+  }
+
+  async huntAnimals({
+    species,
+    count,
+    maxDistance,
+    plan,
+    signal,
+    assertAuthorized,
+  }: {
+    species: HuntSpecies;
+    count: number;
+    maxDistance: number;
+    plan: Plan;
+    signal: AbortSignal;
+    assertAuthorized: () => void;
+  }): Promise<ActionProgress> {
+    const bot = this.requireBot();
+    const weapon = ['netherite_axe', 'diamond_axe', 'iron_axe', 'stone_axe', 'wooden_axe', 'golden_axe']
+      .map(itemName => bot.inventory.items().find(item => item.name === itemName))
+      .find(item => item !== undefined);
+    if (weapon === undefined) {
+      throw new Error('The hunter requires an axe before hunting animals.');
+    }
+    assertAuthorized();
+    await runAbortable({
+      signal,
+      operation: async () => {
+        await bot.equip(weapon, 'hand');
+      },
+      stop: () => {
+        bot.clearControlStates();
+      },
+    });
+
+    const previousMovements = bot.pathfinder.movements;
+    const huntingMovements = new Movements(bot);
+    huntingMovements.canDig = false;
+    huntingMovements.allow1by1towers = false;
+    huntingMovements.allowParkour = false;
+    huntingMovements.maxDropDown = 2;
+    bot.pathfinder.setMovements(huntingMovements);
+
+    let completed = 0;
+    const details: string[] = [];
+    try {
+      while (completed < count) {
+        if (signal.aborted) {
+          throw abortError();
+        }
+        assertAuthorized();
+        const animal = this.locateAnimals({ species, maxDistance, plan })[0];
+        if (animal === undefined) {
+          break;
+        }
+        const target = bot.entities[animal.id];
+        if (!target?.isValid) {
+          continue;
+        }
+
+        const inventoryBefore = this.animalDropInventory(species);
+        let killed = false;
+        let lastPosition = integerPosition(target.position);
+        for (let attackNumber = 0; attackNumber < 16; attackNumber += 1) {
+          assertAuthorized();
+          if (!this.isEligibleAnimalTarget({ id: target.id, species, maxDistance, plan })) {
+            break;
+          }
+          lastPosition = integerPosition(target.position);
+          if (target.position.distanceTo(bot.entity.position) > 3) {
+            await this.moveTo({
+              target: lastPosition,
+              range: 2,
+              plan,
+              signal,
+              assertAuthorized,
+            });
+          }
+          assertAuthorized();
+          assertNotAborted(signal);
+          if (!this.isEligibleAnimalTarget({ id: target.id, species, maxDistance, plan })) {
+            break;
+          }
+          if (target.position.distanceTo(bot.entity.position) > 3.5) {
+            continue;
+          }
+
+          await runAbortable({
+            signal,
+            operation: async () => {
+              await bot.lookAt(target.position.offset(0, Math.max(target.height / 2, 0.5), 0), true);
+            },
+            stop: () => {
+              bot.clearControlStates();
+            },
+          });
+          assertAuthorized();
+          assertNotAborted(signal);
+          if (!this.isEligibleAnimalTarget({ id: target.id, species, maxDistance, plan })) {
+            break;
+          }
+          killed = await this.attackAndWaitForDeath({ target, signal });
+          if (killed) {
+            break;
+          }
+        }
+        if (!killed) {
+          details.push(`Stopped pursuing ${species} ${String(target.id)} because a safe kill was not verified.`);
+          break;
+        }
+
+        completed += 1;
+        const drops = await this.collectAnimalDrops({
+          species,
+          target: lastPosition,
+          before: inventoryBefore,
+          plan,
+          signal,
+          assertAuthorized,
+        });
+        const evidence = drops.length === 0 ? 'no eligible drops reached inventory' : `collected ${drops.join(', ')}`;
+        details.push(
+          `Killed unnamed adult ${species} at ${String(lastPosition.x)}, ${String(lastPosition.y)}, ${String(lastPosition.z)}; ${evidence}.`,
+        );
+      }
+    } finally {
+      bot.pathfinder.setMovements(previousMovements);
+    }
+
     return { requested: count, completed, details };
   }
 
@@ -697,6 +884,103 @@ export class MineflayerBot implements MinecraftBotPort {
         `Mined ${String(expectedIncrease)} blocks, but only ${String(collected)} drops were verified in inventory.`,
       );
     }
+  }
+
+  private animalDropInventory(species: HuntSpecies): Map<string, number> {
+    const bot = this.requireBot();
+    const counts = new Map<string, number>();
+    for (const item of bot.inventory.items()) {
+      if (isVerifiedAnimalDrop({ species, itemName: item.name })) {
+        counts.set(item.name, (counts.get(item.name) ?? 0) + item.count);
+      }
+    }
+    return counts;
+  }
+
+  private isEligibleAnimalTarget({
+    id,
+    species,
+    maxDistance,
+    plan,
+  }: {
+    id: number;
+    species: HuntSpecies;
+    maxDistance: number;
+    plan: Plan;
+  }): boolean {
+    const bot = this.requireBot();
+    const target = bot.entities[id];
+    return (
+      target?.isValid === true &&
+      this.locateAnimals({ species, maxDistance, plan }).some(candidate => candidate.id === id)
+    );
+  }
+
+  private async attackAndWaitForDeath({
+    target,
+    signal,
+  }: {
+    target: Bot['entity'];
+    signal: AbortSignal;
+  }): Promise<boolean> {
+    const bot = this.requireBot();
+    let hurtByBot = false;
+    let killedByBot = false;
+    const handleHurt = (hurtEntity: Bot['entity'], source: { id?: number } | undefined) => {
+      if (hurtEntity.id === target.id) {
+        hurtByBot = source?.id === bot.entity.id;
+      }
+    };
+    const handleDeath = (deadEntity: Bot['entity']) => {
+      if (deadEntity.id === target.id && hurtByBot) {
+        killedByBot = true;
+      }
+    };
+    bot.on('entityHurt', handleHurt);
+    bot.on('entityDead', handleDeath);
+    try {
+      bot.attack(target);
+      await wait({ milliseconds: 1_250, signal });
+      return killedByBot;
+    } finally {
+      bot.removeListener('entityHurt', handleHurt);
+      bot.removeListener('entityDead', handleDeath);
+    }
+  }
+
+  private async collectAnimalDrops({
+    species,
+    target,
+    before,
+    plan,
+    signal,
+    assertAuthorized,
+  }: {
+    species: HuntSpecies;
+    target: Position;
+    before: Map<string, number>;
+    plan: Plan;
+    signal: AbortSignal;
+    assertAuthorized: () => void;
+  }): Promise<string[]> {
+    await wait({ milliseconds: 200, signal });
+    assertAuthorized();
+    await this.moveTo({ target, range: 1, plan, signal, assertAuthorized });
+    const deadline = Date.now() + 3_500;
+    let changes: string[] = [];
+    while (Date.now() < deadline) {
+      assertAuthorized();
+      const after = this.animalDropInventory(species);
+      changes = [...after.entries()]
+        .map(([itemName, itemCount]) => ({ itemName, count: itemCount - (before.get(itemName) ?? 0) }))
+        .filter(change => change.count > 0)
+        .map(change => `${String(change.count)} ${change.itemName}`);
+      if (changes.length > 0) {
+        return changes;
+      }
+      await wait({ milliseconds: 150, signal });
+    }
+    return changes;
   }
 
   private findPlacementReference(target: Vec3) {

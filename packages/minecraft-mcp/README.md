@@ -36,4 +36,4 @@ The workforce manager provisions a connector, agent, and durable session when ea
 
 Run `/spawn` in Minecraft, select the new ForgeBot session in TrueForge, and assign its task there. The agent inspects the world and calls `begin_plan`; TrueForge pauses before that tool executes. Approve once in the console, then watch the bot act without repeated approvals. Use the console stop control to cancel movement and invalidate the plan.
 
-The first slice intentionally excludes combat, explosives, arbitrary server commands, sandboxes, and subagents.
+The hunter slice supports bounded food hunting for unnamed adult cows, pigs, sheep, and chickens. It excludes players, babies, named or attached animals, hostile combat, explosives, arbitrary server commands, sandboxes, and subagents.
