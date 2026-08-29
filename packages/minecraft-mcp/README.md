@@ -4,11 +4,11 @@ This private workspace package connects a Mineflayer bot to TrueForge through MC
 
 ## Quick start
 
-Requirements: Node 22+, pnpm 11, Docker, and an OpenAI API key. Put the key under `OPEN_AI_KEY` in the gitignored workspace `.env`; bootstrap persists it in TrueForge's redacted provider store. `OPENAI_API_KEY` remains accepted as a compatibility fallback.
+Requirements: Node 22+, pnpm 11, Docker, and an OpenAI API key. Bootstrap accepts the standard `OPENAI_API_KEY` name and the legacy `OPEN_AI_KEY` name used by the existing gitignored workspace `.env`, then persists the credential in TrueForge's redacted provider store.
 
 ```bash
-OPEN_AI_KEY=your-key
-MINECRAFT_MODEL_FQN=openai/gpt-5-4-mini
+export OPENAI_API_KEY=your-key
+export MINECRAFT_MODEL_FQN=openai/gpt-5-4-mini
 pnpm minecraft:demo
 ```
 
