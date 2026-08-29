@@ -10,6 +10,7 @@ import {
 import { useCallback, useMemo, type ReactNode } from 'react';
 
 import { notifyComposerBusyFailure } from '../hooks/useComposerBusyState.js';
+import { ExternalTurnSync, type ExternalTurnSyncConfig } from '../hooks/useExternalTurnSync.js';
 import type { AgentUIServer } from '../server/types.js';
 import { ToasterProvider, useToaster } from './ToasterContainer.js';
 
@@ -27,6 +28,8 @@ export type TrueFoundryChatProviderProps = {
   agentName?: string;
   /** Forwarded to `listSessions({ agentId })` for history filtering. */
   listSessionsAgentId?: string;
+  /** Poll an idle active session for turns created by an external controller. Disabled by default. */
+  externalTurnSync?: ExternalTurnSyncConfig;
 };
 
 function ChatRuntimeScope({
@@ -38,6 +41,7 @@ function ChatRuntimeScope({
   adapters,
   onError,
   children,
+  externalTurnSync,
 }: {
   server: AgentUIServer;
   agent?: TrueFoundryAgentConfig;
@@ -47,6 +51,7 @@ function ChatRuntimeScope({
   adapters?: RuntimeAdapters;
   onError?: (error: unknown) => void;
   children: ReactNode;
+  externalTurnSync?: ExternalTurnSyncConfig;
 }) {
   const { showError } = useToaster();
   const reportError = onError ?? showError;
@@ -73,7 +78,12 @@ function ChatRuntimeScope({
     },
   });
 
-  return <AssistantRuntimeProvider runtime={runtime as never}>{children}</AssistantRuntimeProvider>;
+  return (
+    <AssistantRuntimeProvider runtime={runtime as never}>
+      {externalTurnSync === undefined ? null : <ExternalTurnSync server={server} config={externalTurnSync} />}
+      {children}
+    </AssistantRuntimeProvider>
+  );
 }
 
 /**
@@ -81,7 +91,17 @@ function ChatRuntimeScope({
  * assistant-ui + error toasts.
  */
 export function TrueFoundryChatProvider(props: TrueFoundryChatProviderProps) {
-  const { server, initialSessionId, adapters, onError, children, agent, agentName, listSessionsAgentId } = props;
+  const {
+    server,
+    initialSessionId,
+    adapters,
+    onError,
+    children,
+    agent,
+    agentName,
+    listSessionsAgentId,
+    externalTurnSync,
+  } = props;
 
   const stableServer = useMemo(() => server, [server]);
 
@@ -95,6 +115,7 @@ export function TrueFoundryChatProvider(props: TrueFoundryChatProviderProps) {
         initialSessionId={initialSessionId}
         adapters={adapters}
         onError={onError}
+        externalTurnSync={externalTurnSync}
       >
         {children}
       </ChatRuntimeScope>
