@@ -46,14 +46,16 @@ async function runAbortable<T>({
   }
 
   return await new Promise<T>((resolve, reject) => {
-    const handleAbort = () => {
+    let aborted = false;
+      const handleAbort = () => {
       stop();
-      reject(abortError());
+      aborted = true;
+        stop();
     };
     signal.addEventListener('abort', handleAbort, { once: true });
     void operation()
-      .then(resolve)
-      .catch(reject)
+      .then(value => (aborted ? reject(abortError()) : resolve(value)))
+      .catch(error => reject(aborted ? abortError() : error))
       .finally(() => {
         signal.removeEventListener('abort', handleAbort);
       });
@@ -240,7 +242,10 @@ export class MineflayerBot implements MinecraftBotPort {
       if (signal.aborted) {
         throw abortError();
       }
-      const block = bot.findBlock({
+      if (plan.expiresAt <= Date.now()) {
+          throw new Error('The approved plan has expired.');
+        }
+        const block = bot.findBlock({
         matching: candidate =>
           candidate.type === blockType.id &&
           isPositionWithinPlanBounds({ plan, position: integerPosition(candidate.position) }),
@@ -338,7 +343,10 @@ export class MineflayerBot implements MinecraftBotPort {
       if (signal.aborted) {
         throw abortError();
       }
-      const target = new Vec3(origin.x + operation.dx, origin.y + operation.dy, origin.z + operation.dz);
+      if (plan.expiresAt <= Date.now()) {
+          throw new Error('The approved plan has expired.');
+        }
+        const target = new Vec3(origin.x + operation.dx, origin.y + operation.dy, origin.z + operation.dz);
       const existing = bot.blockAt(target);
       if (existing?.name === operation.block || (operation.block === 'air' && existing?.name === 'air')) {
         completed += 1;
