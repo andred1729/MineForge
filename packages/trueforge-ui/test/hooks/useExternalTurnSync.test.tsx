@@ -239,6 +239,18 @@ describe('ExternalTurnSync', () => {
     expect(reloadThreadList).toHaveBeenCalledOnce();
   });
 
+  it('does not reload the thread list when existing session timestamps change', async () => {
+    let sessions = [session('session-1', '2026-08-29T00:00:00.000Z')];
+    const server = createMockAgentUIServer({ listSessions: async () => ({ data: sessions }) });
+    renderSync(server);
+    await act(async () => await vi.advanceTimersByTimeAsync(0));
+
+    sessions = [session('session-1', '2026-08-29T00:00:01.000Z')];
+    await act(async () => await vi.advanceTimersByTimeAsync(1_000));
+
+    expect(reloadThreadList).not.toHaveBeenCalled();
+  });
+
   it('retries external session discovery when the thread-list reload fails', async () => {
     let sessions = [session('session-1', '2026-08-29T00:00:00.000Z')];
     const server = createMockAgentUIServer({ listSessions: async () => ({ data: sessions }) });

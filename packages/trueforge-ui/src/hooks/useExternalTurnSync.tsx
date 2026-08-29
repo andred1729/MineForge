@@ -67,7 +67,7 @@ export function ExternalTurnSync({ server, config }: { server: AgentUIServer; co
   const reloadRef = useRef(reload);
   const reloadThreadListRef = useRef(() => aui.threads().reload());
   const baselineBySessionRef = useRef(new Map<string, SyncBaseline>());
-  const sessionListBaselineRef = useRef<string | undefined>(undefined);
+  const knownSessionIdsRef = useRef<Set<string> | undefined>(undefined);
   reloadRef.current = reload;
   reloadThreadListRef.current = () => aui.threads().reload();
 
@@ -86,18 +86,21 @@ export function ExternalTurnSync({ server, config }: { server: AgentUIServer; co
         if (cancelled) {
           return;
         }
-        const signature = page.data.map(session => `${session.id}:${session.updatedAt}`).join('|');
-        const baseline = sessionListBaselineRef.current;
-        if (baseline === undefined) {
-          sessionListBaselineRef.current = signature;
+        const sessionIds = page.data.map(session => session.id);
+        const knownSessionIds = knownSessionIdsRef.current;
+        if (knownSessionIds === undefined) {
+          knownSessionIdsRef.current = new Set(sessionIds);
           return;
         }
-        if (baseline === signature) {
+        const hasNewSession = sessionIds.some(sessionId => !knownSessionIds.has(sessionId));
+        if (!hasNewSession) {
           return;
         }
 
         await reloadThreadListRef.current();
-        sessionListBaselineRef.current = signature;
+        for (const sessionId of sessionIds) {
+          knownSessionIds.add(sessionId);
+        }
       } catch {
         // Session discovery is best-effort and retries without disturbing the active chat.
       } finally {
