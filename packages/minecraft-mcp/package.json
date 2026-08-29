@@ -8,10 +8,7 @@
   },
   "scripts": {
     "build": "tsup",
-    "bootstrap": "tsx src/bootstrap.ts",
     "dev": "tsx watch src/main.ts",
-    "fixture": "tsx src/fixture.ts",
-    "prebootstrap": "pnpm run sdk:build",
     "prebuild": "pnpm run sdk:build",
     "predev": "pnpm run sdk:build",
     "pretest": "pnpm run sdk:build",

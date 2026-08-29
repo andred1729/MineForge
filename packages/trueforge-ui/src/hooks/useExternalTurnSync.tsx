@@ -4,11 +4,11 @@ import { useThreadIsRunning } from '@assistant-ui/core/react';
 import { useTrueFoundryReload } from '@truefoundry/assistant-ui-runtime';
 import { useEffect, useRef } from 'react';
 
-import { useAuiState } from '../assistant-ui.js';
+import { useAui, useAuiState } from '../assistant-ui.js';
 import type { AgentUIServer } from '../server/types.js';
 
 export type ExternalTurnSyncConfig = {
-  /** How often to check the active idle session for a turn created outside this UI. Default: 1000ms. */
+  /** How often to check for sessions and turns created outside this UI. Default: 1000ms. */
   intervalMs?: number;
 };
 
@@ -50,6 +50,7 @@ async function newestTurnId({
 }
 
 export function ExternalTurnSync({ server, config }: { server: AgentUIServer; config: ExternalTurnSyncConfig }) {
+  const aui = useAui();
   const remoteId = useAuiState(state => state.threadListItem.remoteId);
   const isLoading = useAuiState(state => state.thread.isLoading);
   const localTurnId = useAuiState(state => {
@@ -64,8 +65,60 @@ export function ExternalTurnSync({ server, config }: { server: AgentUIServer; co
   const isRunning = useThreadIsRunning();
   const reload = useTrueFoundryReload();
   const reloadRef = useRef(reload);
+  const reloadThreadListRef = useRef(() => aui.threads().reload());
   const baselineBySessionRef = useRef(new Map<string, SyncBaseline>());
+  const sessionListBaselineRef = useRef<string | undefined>(undefined);
   reloadRef.current = reload;
+  reloadThreadListRef.current = () => aui.threads().reload();
+
+  useEffect(() => {
+    const intervalMs = Math.max(config.intervalMs ?? 1_000, 250);
+    let cancelled = false;
+    let requestInFlight = false;
+
+    const poll = async () => {
+      if (cancelled || requestInFlight || document.visibilityState !== 'visible') {
+        return;
+      }
+      requestInFlight = true;
+      try {
+        const page = await server.listSessions({ limit: 25, order: 'desc' });
+        if (cancelled) {
+          return;
+        }
+        const signature = page.data.map(session => `${session.id}:${session.updatedAt}`).join('|');
+        const baseline = sessionListBaselineRef.current;
+        if (baseline === undefined) {
+          sessionListBaselineRef.current = signature;
+          return;
+        }
+        if (baseline === signature) {
+          return;
+        }
+
+        await reloadThreadListRef.current();
+        sessionListBaselineRef.current = signature;
+      } catch {
+        // Session discovery is best-effort and retries without disturbing the active chat.
+      } finally {
+        requestInFlight = false;
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void poll();
+      }
+    };
+    void poll();
+    const interval = window.setInterval(() => void poll(), intervalMs);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [config.intervalMs, server]);
 
   useEffect(() => {
     if (remoteId == null || isRunning || isLoading) {

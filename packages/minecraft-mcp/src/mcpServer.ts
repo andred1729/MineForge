@@ -131,6 +131,35 @@ export function createMinecraftMcpServer({
   );
 
   server.registerTool(
+    'locate_trees',
+    {
+      description:
+        'Locate complete natural trees of one log type. Results exclude player log structures, partial trees, and trees crossing the search boundary.',
+      inputSchema: z.object({
+        block_name: z.string().min(1).max(64).default('oak_log'),
+        max_distance: z.number().int().min(1).max(32).default(24),
+      }),
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ block_name: blockName, max_distance: maxDistance }) =>
+      await executeTool(() => ({ trees: bot.locateNaturalTrees({ blockName, maxDistance }) })),
+  );
+
+  server.registerTool(
+    'announce',
+    {
+      description: 'Say a concise status update in Minecraft chat so nearby players know what this bot is doing.',
+      inputSchema: z.object({ message: z.string().min(1).max(300) }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    },
+    async ({ message }) =>
+      await executeTool(async () => {
+        await bot.say(message);
+        return { announced: true, message };
+      }),
+  );
+
+  server.registerTool(
     'begin_plan',
     {
       description:
@@ -200,6 +229,40 @@ export function createMinecraftMcpServer({
           const plan = planStore.require({ planId, action: 'gather' });
           const boundedDistance = Math.min(maxDistance, plan.radiusBlocks);
           return await bot.gather({
+            blockName,
+            count,
+            maxDistance: boundedDistance,
+            plan,
+            signal: activeSignal,
+            assertAuthorized: () => planStore.require({ planId, action: 'gather' }),
+          });
+        },
+      }),
+  );
+
+  server.registerTool(
+    'harvest_tree',
+    {
+      description:
+        'Harvest complete natural trees until the requested log count is verified in inventory. The final tree is always finished, so completed may exceed requested.',
+      inputSchema: z.object({
+        plan_id: PlanIdSchema,
+        block_name: z.string().min(1).max(64).default('oak_log'),
+        count: z.number().int().min(1).max(32),
+        max_distance: z.number().int().min(1).max(32).default(24),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    },
+    async ({ plan_id: planId, block_name: blockName, count, max_distance: maxDistance }, extra) =>
+      await executeActionTool({
+        signal: extra.signal,
+        bot,
+        planStore,
+        actionQueue,
+        operation: async activeSignal => {
+          const plan = planStore.require({ planId, action: 'gather' });
+          const boundedDistance = Math.min(maxDistance, plan.radiusBlocks);
+          return await bot.harvestTrees({
             blockName,
             count,
             maxDistance: boundedDistance,
@@ -426,6 +489,11 @@ function writeMethodNotAllowed(response: ServerResponse): void {
   response.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32_000, message: 'Method not allowed.' }, id: null }));
 }
 
+function writeNotFound(response: ServerResponse): void {
+  response.writeHead(404, { 'content-type': 'application/json' });
+  response.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32_001, message: 'MCP bot not found.' }, id: null }));
+}
+
 /** Normalizes the SDK transport accessors for projects using exactOptionalPropertyTypes. */
 class CompatibleStreamableTransport implements Transport {
   onclose: NonNullable<Transport['onclose']> = () => undefined;
@@ -468,12 +536,14 @@ export function startMinecraftMcpHttpServer({
   host,
   port,
   createServerForRequest,
+  resolveServerForRequest,
   maxRequestBytes = MAX_REQUEST_BYTES,
   requestTimeoutMs = REQUEST_TIMEOUT_MS,
 }: {
   host: string;
   port: number;
-  createServerForRequest: () => McpServer;
+  createServerForRequest?: () => McpServer;
+  resolveServerForRequest?: (path: string) => (() => McpServer) | null;
   maxRequestBytes?: number;
   requestTimeoutMs?: number;
 }) {
@@ -483,8 +553,22 @@ export function startMinecraftMcpHttpServer({
       response.end(JSON.stringify({ status: 'ok' }));
       return;
     }
-    if (request.url !== '/mcp' || request.method !== 'POST') {
+    if (request.method !== 'POST') {
       writeMethodNotAllowed(response);
+      return;
+    }
+
+    const path = new URL(request.url ?? '/', 'http://minecraft-mcp.local').pathname;
+    if (path !== '/mcp' && !/^\/bots\/forgebot[1-5]\/mcp$/.test(path)) {
+      writeNotFound(response);
+      return;
+    }
+
+    const serverFactory =
+      resolveServerForRequest?.(path) ??
+      (path === '/mcp' && createServerForRequest !== undefined ? createServerForRequest : null);
+    if (serverFactory === null) {
+      writeNotFound(response);
       return;
     }
 
@@ -493,7 +577,7 @@ export function startMinecraftMcpHttpServer({
       let transport: CompatibleStreamableTransport | null = null;
       try {
         const body = await readJsonBody(request, { maxBytes: maxRequestBytes, timeoutMs: requestTimeoutMs });
-        mcpServer = createServerForRequest();
+        mcpServer = serverFactory();
         transport = new CompatibleStreamableTransport();
         await mcpServer.connect(transport);
         await transport.handleRequest(request, response, body);

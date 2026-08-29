@@ -1,4 +1,5 @@
 import type { BlueprintBlock, Plan, Position } from './domain.js';
+import type { NaturalTree } from './treeHarvest.js';
 
 export interface InventoryItem {
   name: string;
@@ -44,6 +45,7 @@ export interface MinecraftBotPort {
   isConnected(): boolean;
   position(): Position;
   inspect(options: { radius: number }): WorldObservation;
+  locateNaturalTrees(options: { blockName: string; maxDistance: number; plan?: Plan }): NaturalTree[];
   moveTo(options: {
     target: Position;
     range: number;
@@ -52,6 +54,14 @@ export interface MinecraftBotPort {
     assertAuthorized: () => void;
   }): Promise<void>;
   gather(options: {
+    blockName: string;
+    count: number;
+    maxDistance: number;
+    plan: Plan;
+    signal: AbortSignal;
+    assertAuthorized: () => void;
+  }): Promise<ActionProgress>;
+  harvestTrees(options: {
     blockName: string;
     count: number;
     maxDistance: number;

@@ -1,6 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import { request as httpRequest } from 'node:http';
@@ -42,8 +42,10 @@ function fakeBot(): MinecraftBotPort {
     isConnected: () => true,
     position: () => observation.position,
     inspect: () => observation,
+    locateNaturalTrees: () => [],
     moveTo: async () => {},
     gather: async ({ count }) => ({ requested: count, completed: count, details: [] }),
+    harvestTrees: async ({ count }) => ({ requested: count, completed: count, details: [] }),
     craft: async ({ count }) => ({ requested: count, completed: count, details: [] }),
     executeBlueprint: async ({ blocks }) => ({ requested: blocks.length, completed: blocks.length, details: [] }),
     drop: async ({ count }) => ({ requested: count, completed: count, details: [] }),
@@ -68,9 +70,12 @@ describe('Minecraft MCP server', () => {
     const catalog = await client.listTools();
     expect(catalog.tools.map(tool => tool.name)).toEqual([
       'inspect_world',
+      'locate_trees',
+      'announce',
       'begin_plan',
       'move_to',
       'gather_blocks',
+      'harvest_tree',
       'craft_item',
       'execute_blueprint',
       'drop_item',
@@ -168,6 +173,84 @@ describe('Minecraft MCP server', () => {
     await server.close();
   });
 
+  it('locates natural trees, announces status, and harvests only under an approved gather plan', async () => {
+    const bot = fakeBot();
+    const say = vi.fn(async () => {});
+    const harvestTrees = vi.fn<MinecraftBotPort['harvestTrees']>(async ({ count }) => ({
+      requested: count,
+      completed: 5,
+      details: ['Harvested one complete tree and verified five logs.'],
+    }));
+    bot.say = say;
+    bot.locateNaturalTrees = () => [
+      {
+        logName: 'oak_log',
+        root: { x: 4, y: 64, z: 2 },
+        logs: [
+          { x: 4, y: 64, z: 2 },
+          { x: 4, y: 65, z: 2 },
+          { x: 4, y: 66, z: 2 },
+        ],
+      },
+    ];
+    bot.harvestTrees = harvestTrees;
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createMinecraftMcpServer({
+      bot,
+      planStore: new PlanStore(),
+      actionQueue: new MinecraftActionQueue(),
+    });
+    const client = new Client({ name: 'minecraft-lumberjack-test', version: '1.0.0' });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const located = TextResultSchema.parse(
+      await client.callTool({ name: 'locate_trees', arguments: { block_name: 'oak_log', max_distance: 16 } }),
+    );
+    expect(JSON.parse(firstText(located))).toMatchObject({
+      trees: [{ logName: 'oak_log', root: { x: 4, y: 64, z: 2 } }],
+    });
+
+    const announced = TextResultSchema.parse(
+      await client.callTool({ name: 'announce', arguments: { message: 'I am looking for an oak tree.' } }),
+    );
+    expect(announced.isError).not.toBe(true);
+    expect(say).toHaveBeenCalledWith('I am looking for an oak tree.');
+
+    const denied = TextResultSchema.parse(
+      await client.callTool({
+        name: 'harvest_tree',
+        arguments: { plan_id: 'missing', block_name: 'oak_log', count: 4, max_distance: 16 },
+      }),
+    );
+    expect(denied.isError).toBe(true);
+
+    const begun = TextResultSchema.parse(
+      await client.callTool({
+        name: 'begin_plan',
+        arguments: {
+          summary: 'Gather oak logs',
+          steps: ['Find a natural tree', 'Harvest the whole tree'],
+          permitted_actions: ['gather'],
+          duration_minutes: 5,
+          radius_blocks: 16,
+        },
+      }),
+    );
+    const parsedPlan = z.object({ plan: z.object({ id: z.string() }) }).parse(JSON.parse(firstText(begun)));
+    const harvested = TextResultSchema.parse(
+      await client.callTool({
+        name: 'harvest_tree',
+        arguments: { plan_id: parsedPlan.plan.id, block_name: 'oak_log', count: 4, max_distance: 16 },
+      }),
+    );
+    expect(JSON.parse(firstText(harvested))).toMatchObject({ requested: 4, completed: 5 });
+    expect(harvestTrees).toHaveBeenCalledOnce();
+
+    await client.close();
+    await server.close();
+  });
+
   it('rejects oversized request bodies with HTTP 413 before creating an MCP server', async () => {
     let createdServers = 0;
     const httpServer = startMinecraftMcpHttpServer({
@@ -196,6 +279,37 @@ describe('Minecraft MCP server', () => {
         error: { message: 'Request body is too large.' },
       });
       expect(createdServers).toBe(0);
+    } finally {
+      await httpServer.close();
+    }
+  });
+
+  it('resolves bot-scoped MCP paths and rejects unknown bots before reading a body', async () => {
+    const paths: string[] = [];
+    const httpServer = startMinecraftMcpHttpServer({
+      host: '127.0.0.1',
+      port: 0,
+      resolveServerForRequest: path => {
+        paths.push(path);
+        return path === '/bots/forgebot1/mcp'
+          ? () =>
+              createMinecraftMcpServer({
+                bot: fakeBot(),
+                planStore: new PlanStore(),
+                actionQueue: new MinecraftActionQueue(),
+              })
+          : null;
+      },
+    });
+    await httpServer.listen();
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${String(httpServer.port())}/bots/forgebot2/mcp`, {
+        method: 'POST',
+        body: '{',
+      });
+      expect(response.status).toBe(404);
+      expect(paths).toEqual(['/bots/forgebot2/mcp']);
     } finally {
       await httpServer.close();
     }

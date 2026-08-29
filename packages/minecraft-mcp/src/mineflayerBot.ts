@@ -9,6 +9,7 @@ import type { ActionProgress, MinecraftBotPort, NearbyBlock, NearbyEntity, World
 import { splitChatMessage } from './chat.js';
 import type { BlueprintBlock, Plan, Position } from './domain.js';
 import { isPositionWithinPlanBounds } from './planStore.js';
+import { findNaturalTrees, type NaturalTree, type TreeWorld } from './treeHarvest.js';
 
 interface MineflayerBotOptions {
   host: string;
@@ -30,6 +31,26 @@ function integerPosition(position: Vec3): Position {
 
 function abortError(): Error {
   return new Error('Minecraft action was cancelled.');
+}
+
+async function wait({ milliseconds, signal }: { milliseconds: number; signal: AbortSignal }): Promise<void> {
+  if (signal.aborted) {
+    throw abortError();
+  }
+  await new Promise<void>((resolve, reject) => {
+    const handleAbort = () => {
+      clearTimeout(timeout);
+      reject(abortError());
+    };
+    const timeout = setTimeout(() => {
+      signal.removeEventListener('abort', handleAbort);
+      resolve();
+    }, milliseconds);
+    signal.addEventListener('abort', handleAbort, { once: true });
+    if (signal.aborted) {
+      handleAbort();
+    }
+  });
 }
 
 export async function runAbortable<T>({
@@ -189,6 +210,40 @@ export class MineflayerBot implements MinecraftBotPort {
     };
   }
 
+  locateNaturalTrees({
+    blockName,
+    maxDistance,
+    plan,
+  }: {
+    blockName: string;
+    maxDistance: number;
+    plan?: Plan;
+  }): NaturalTree[] {
+    const bot = this.requireBot();
+    const blockType = bot.registry.blocksByName[blockName];
+    if (blockType === undefined) {
+      throw new Error(`Unknown Minecraft block: ${blockName}`);
+    }
+    const origin = integerPosition(bot.entity.position);
+    const positions = bot
+      .findBlocks({ matching: blockType.id, maxDistance, count: 256 })
+      .map(position => integerPosition(position));
+    const world: TreeWorld = {
+      blockAt: position => {
+        const block = bot.blockAt(new Vec3(position.x, position.y, position.z));
+        return block === null ? null : { name: block.name, position: integerPosition(block.position) };
+      },
+    };
+    return findNaturalTrees({
+      world,
+      candidates: positions,
+      logName: blockName,
+      origin,
+      maxDistance,
+      withinBounds: position => plan === undefined || isPositionWithinPlanBounds({ plan, position }),
+    });
+  }
+
   async moveTo({
     target,
     range,
@@ -256,6 +311,9 @@ export class MineflayerBot implements MinecraftBotPort {
     assertAuthorized: () => void;
   }): Promise<ActionProgress> {
     const bot = this.requireBot();
+    if (blockName.endsWith('_log') && !blockName.startsWith('stripped_')) {
+      return await this.harvestTrees({ blockName, count, maxDistance, plan, signal, assertAuthorized });
+    }
     const blockType = bot.registry.blocksByName[blockName];
     if (blockType === undefined) {
       throw new Error(`Unknown Minecraft block: ${blockName}`);
@@ -269,9 +327,8 @@ export class MineflayerBot implements MinecraftBotPort {
       }
       assertAuthorized();
       const block = bot.findBlock({
-        matching: candidate =>
-          candidate.type === blockType.id &&
-          isPositionWithinPlanBounds({ plan, position: integerPosition(candidate.position) }),
+        matching: blockType.id,
+        useExtraInfo: candidate => isPositionWithinPlanBounds({ plan, position: integerPosition(candidate.position) }),
         maxDistance,
       });
       if (block === null) {
@@ -304,6 +361,95 @@ export class MineflayerBot implements MinecraftBotPort {
       completed += 1;
       details.push(`Mined ${blockName} at ${block.position.toString()}`);
     }
+    return { requested: count, completed, details };
+  }
+
+  async harvestTrees({
+    blockName,
+    count,
+    maxDistance,
+    plan,
+    signal,
+    assertAuthorized,
+  }: {
+    blockName: string;
+    count: number;
+    maxDistance: number;
+    plan: Plan;
+    signal: AbortSignal;
+    assertAuthorized: () => void;
+  }): Promise<ActionProgress> {
+    const bot = this.requireBot();
+    const itemType = bot.registry.itemsByName[blockName];
+    if (itemType === undefined) {
+      throw new Error(`${blockName} cannot be collected as an inventory item.`);
+    }
+    const startingCount = bot.inventory.count(itemType.id, null);
+    const details: string[] = [];
+
+    while (bot.inventory.count(itemType.id, null) - startingCount < count) {
+      if (signal.aborted) {
+        throw abortError();
+      }
+      assertAuthorized();
+      const tree = this.locateNaturalTrees({ blockName, maxDistance, plan })[0];
+      if (tree === undefined) {
+        break;
+      }
+      const treeStartingCount = bot.inventory.count(itemType.id, null);
+      let mined = 0;
+      for (const position of tree.logs) {
+        assertAuthorized();
+        const block = bot.blockAt(new Vec3(position.x, position.y, position.z));
+        if (block?.name !== blockName) {
+          continue;
+        }
+        if (!bot.canDigBlock(block)) {
+          await this.moveTo({ target: position, range: 3, plan, signal, assertAuthorized });
+        }
+        const tool = bot.pathfinder.bestHarvestTool(block);
+        if (tool !== null) {
+          assertAuthorized();
+          await runAbortable({
+            signal,
+            operation: async () => {
+              await bot.equip(tool, 'hand');
+            },
+            stop: () => {
+              // Mineflayer exposes no equip cancellation; serialization waits for it to settle.
+            },
+          });
+        }
+        assertAuthorized();
+        await runAbortable({
+          signal,
+          operation: async () => {
+            await bot.dig(block);
+          },
+          stop: () => {
+            bot.stopDigging();
+          },
+        });
+        mined += 1;
+      }
+
+      await this.collectDrops({
+        target: tree.root,
+        itemTypeId: itemType.id,
+        previousCount: treeStartingCount,
+        expectedIncrease: mined,
+        plan,
+        signal,
+        assertAuthorized,
+      });
+      const collected = bot.inventory.count(itemType.id, null) - treeStartingCount;
+      details.push(
+        `Harvested complete ${blockName} tree at ${String(tree.root.x)}, ${String(tree.root.y)}, ${String(tree.root.z)}: mined ${String(mined)}, verified ${String(collected)} collected.`,
+      );
+    }
+
+    const completed = bot.inventory.count(itemType.id, null) - startingCount;
+    details.push(`Verified ${String(completed)} total ${blockName} collected in inventory.`);
     return { requested: count, completed, details };
   }
 
@@ -493,6 +639,40 @@ export class MineflayerBot implements MinecraftBotPort {
   onChat(listener: (event: { username: string; message: string }) => void): () => void {
     this.chatListeners.add(listener);
     return () => this.chatListeners.delete(listener);
+  }
+
+  private async collectDrops({
+    target,
+    itemTypeId,
+    previousCount,
+    expectedIncrease = 1,
+    plan,
+    signal,
+    assertAuthorized,
+  }: {
+    target: Position;
+    itemTypeId: number;
+    previousCount: number;
+    expectedIncrease?: number;
+    plan: Plan;
+    signal: AbortSignal;
+    assertAuthorized: () => void;
+  }): Promise<void> {
+    const bot = this.requireBot();
+    await wait({ milliseconds: 200, signal });
+    assertAuthorized();
+    await this.moveTo({ target, range: 1, plan, signal, assertAuthorized });
+    const deadline = Date.now() + 3_500;
+    while (bot.inventory.count(itemTypeId, null) - previousCount < expectedIncrease && Date.now() < deadline) {
+      assertAuthorized();
+      await wait({ milliseconds: 150, signal });
+    }
+    const collected = bot.inventory.count(itemTypeId, null) - previousCount;
+    if (collected < expectedIncrease) {
+      throw new Error(
+        `Mined ${String(expectedIncrease)} blocks, but only ${String(collected)} drops were verified in inventory.`,
+      );
+    }
   }
 
   private findPlacementReference(target: Vec3) {
