@@ -1,3 +1,4 @@
+import { demoWorksitesForRole } from './botRoles.js';
 import { loadWorkforceConfig } from './config.js';
 import { createMinecraftMcpServer, startMinecraftMcpHttpServer } from './mcpServer.js';
 import { MineflayerBot } from './mineflayerBot.js';
@@ -86,6 +87,7 @@ export async function main(): Promise<void> {
               bot: context.bot,
               planStore: context.planStore,
               actionQueue: context.actionQueue,
+              additionalPlanOrigins: demoWorksitesForRole(context.record.role),
             });
     },
   });

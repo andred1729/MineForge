@@ -199,6 +199,7 @@ describe('Minecraft MCP server', () => {
       bot,
       planStore: new PlanStore(),
       actionQueue: new MinecraftActionQueue(),
+      additionalPlanOrigins: [{ x: -46, y: 66, z: -6 }],
     });
     const client = new Client({ name: 'minecraft-lumberjack-test', version: '1.0.0' });
     await server.connect(serverTransport);
@@ -237,7 +238,15 @@ describe('Minecraft MCP server', () => {
         },
       }),
     );
-    const parsedPlan = z.object({ plan: z.object({ id: z.string() }) }).parse(JSON.parse(firstText(begun)));
+    const parsedPlan = z
+      .object({
+        plan: z.object({
+          id: z.string(),
+          additionalOrigins: z.array(z.object({ x: z.number(), y: z.number(), z: z.number() })),
+        }),
+      })
+      .parse(JSON.parse(firstText(begun)));
+    expect(parsedPlan.plan.additionalOrigins).toEqual([{ x: -46, y: 66, z: -6 }]);
     const harvested = TextResultSchema.parse(
       await client.callTool({
         name: 'harvest_tree',

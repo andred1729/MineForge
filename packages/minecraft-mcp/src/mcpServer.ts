@@ -8,7 +8,7 @@ import { z } from 'zod';
 
 import { MinecraftActionQueue } from './actionQueue.js';
 import type { MinecraftBotPort } from './botPort.js';
-import { BeginPlanInputSchema, BlueprintSchema, PlanOutcomeSchema, PositionSchema } from './domain.js';
+import { BeginPlanInputSchema, BlueprintSchema, PlanOutcomeSchema, PositionSchema, type Position } from './domain.js';
 import { PlanStore } from './planStore.js';
 
 const FORBIDDEN_BLUEPRINT_BLOCKS = new Set([
@@ -111,10 +111,12 @@ export function createMinecraftMcpServer({
   bot,
   planStore,
   actionQueue,
+  additionalPlanOrigins = [],
 }: {
   bot: MinecraftBotPort;
   planStore: PlanStore;
   actionQueue: MinecraftActionQueue;
+  additionalPlanOrigins?: Position[];
 }): McpServer {
   const server = new McpServer({ name: 'minecraft-agent', version: '0.1.0' });
 
@@ -127,7 +129,11 @@ export function createMinecraftMcpServer({
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ radius }) =>
-      await executeTool(() => ({ observation: bot.inspect({ radius }), active_plan: planStore.current() })),
+      await executeTool(() => ({
+        observation: bot.inspect({ radius }),
+        active_plan: planStore.current(),
+        configured_worksites: additionalPlanOrigins,
+      })),
   );
 
   server.registerTool(
@@ -169,7 +175,8 @@ export function createMinecraftMcpServer({
     },
     async input =>
       await executeTool(async () => {
-        const plan = planStore.begin({ input, origin: bot.position() });
+        const additionalOrigins = additionalPlanOrigins.map(({ x, y, z }) => ({ x, y, z }));
+        const plan = planStore.begin({ input, origin: bot.position(), additionalOrigins });
         await bot.say(`Approved plan started: ${plan.summary}`);
         return { plan };
       }),

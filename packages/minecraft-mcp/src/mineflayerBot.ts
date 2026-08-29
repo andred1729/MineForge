@@ -148,7 +148,11 @@ export class MineflayerBot implements MinecraftBotPort {
           throw new Error('Mineflayer failed before spawning.');
         }),
       ]);
-      bot.pathfinder.setMovements(new Movements(bot));
+      const movements = new Movements(bot);
+      movements.canDig = false;
+      movements.allow1by1towers = false;
+      movements.scafoldingBlocks = [];
+      bot.pathfinder.setMovements(movements);
     } catch (caught) {
       this.bot = null;
       bot.end('Connection failed');

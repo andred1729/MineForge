@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import type { Position } from './domain.js';
+
 export const BotRoleSchema = z.enum(['lumberjack', 'miner', 'builder', 'hunter', 'scout']);
 export type BotRole = z.infer<typeof BotRoleSchema>;
 
@@ -21,6 +23,12 @@ const ROLE_LABELS: Record<BotRole, string> = {
   hunter: 'Hunter',
   scout: 'Scout',
 };
+
+export const LUMBERJACK_DEMO_WORKSITE: Readonly<Position> = { x: -46, y: 66, z: -6 };
+
+export function demoWorksitesForRole(role: BotRole): Position[] {
+  return role === 'lumberjack' ? [{ ...LUMBERJACK_DEMO_WORKSITE }] : [];
+}
 
 export function createBotIdentity(ordinal: number): BotIdentity {
   const role = ROLE_SLOTS[ordinal - 1];
