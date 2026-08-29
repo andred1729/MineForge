@@ -57,7 +57,10 @@ export const WorkforceConfigSchema = z.object({
   maxBots: z.coerce.number().int().min(1).max(5).default(5),
   spawnHost: z.string().min(1).default('0.0.0.0'),
   spawnPort: PortSchema.default(8_793),
-  spawnToken: z.string().min(32),
+  spawnToken: z
+    .string()
+    .min(32)
+    .refine(token => token === token.trim(), 'Spawn token must not have surrounding whitespace.'),
   mcpPublicBaseUrl: z.url().default('http://127.0.0.1:8792'),
 });
 export type WorkforceConfig = z.infer<typeof WorkforceConfigSchema>;

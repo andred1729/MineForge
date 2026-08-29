@@ -15,13 +15,14 @@ export const WorkforceStateSchema = z.object({
   version: z.literal(1),
   nextOrdinal: z.number().int().min(1).max(6),
   bots: z.array(WorkforceBotRecordSchema).max(5),
+  pendingSessionDeletes: z.array(z.string().min(1)).default([]),
 });
 export type WorkforceState = z.infer<typeof WorkforceStateSchema>;
 
 const STATE_FILE = 'minecraft-workforce.json';
 
 export function emptyWorkforceState(): WorkforceState {
-  return { version: 1, nextOrdinal: 1, bots: [] };
+  return { version: 1, nextOrdinal: 1, bots: [], pendingSessionDeletes: [] };
 }
 
 export async function loadWorkforceState(directory: string): Promise<WorkforceState> {

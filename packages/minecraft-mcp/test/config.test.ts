@@ -44,4 +44,13 @@ describe('Minecraft configuration', () => {
       }),
     ).toThrow();
   });
+
+  it('rejects spawn tokens with surrounding whitespace', () => {
+    expect(() =>
+      loadWorkforceConfig({
+        MINECRAFT_MODEL_FQN: 'openai/gpt-5-4-mini',
+        MINECRAFT_SPAWN_TOKEN: ' test-spawn-token-with-32-characters ',
+      }),
+    ).toThrow('Spawn token must not have surrounding whitespace');
+  });
 });

@@ -32,6 +32,7 @@ export interface SpawnedBot {
 
 interface ActiveBot extends WorkforceBotContext {
   controller: SessionMirrorPort;
+  createdSession: boolean;
 }
 
 export interface SessionMirrorPort {
@@ -67,9 +68,16 @@ export class WorkforceManager {
     if (this.state !== null) {
       return;
     }
-    const state = await loadWorkforceState(this.options.stateDirectory);
+    let state = await loadWorkforceState(this.options.stateDirectory);
     await this.options.provisioner.ensureProvider();
     try {
+      if (state.pendingSessionDeletes.length > 0) {
+        for (const sessionId of state.pendingSessionDeletes) {
+          await this.options.provisioner.deleteSession(sessionId);
+        }
+        state = { ...state, pendingSessionDeletes: [] };
+        await saveWorkforceState({ directory: this.options.stateDirectory, state });
+      }
       for (const record of state.bots) {
         await this.activate({ identity: record, existingRecord: record });
       }
@@ -86,7 +94,19 @@ export class WorkforceManager {
       }
       this.state = restoredState;
     } catch (caught) {
+      const replacementSessionIds = [...this.activeBots.values()]
+        .filter(active => active.createdSession)
+        .map(active => active.record.sessionId);
       await this.closeActiveBots();
+      await Promise.all(
+        replacementSessionIds.map(async sessionId => {
+          try {
+            await this.options.provisioner.deleteSession(sessionId);
+          } catch (cleanupError) {
+            console.error(`Could not delete replacement TrueForge session ${sessionId}.`, cleanupError);
+          }
+        }),
+      );
       throw new Error('Could not restore the Minecraft workforce.', { cause: caught });
     }
   }
@@ -159,6 +179,7 @@ export class WorkforceManager {
       version: 1,
       nextOrdinal: identity.ordinal + 1,
       bots: [...state.bots, active.record],
+      pendingSessionDeletes: state.pendingSessionDeletes,
     };
     try {
       await saveWorkforceState({ directory: this.options.stateDirectory, state: nextState });
@@ -185,19 +206,26 @@ export class WorkforceManager {
     if (active === undefined) {
       return false;
     }
-    await this.options.provisioner.deleteSession(record.sessionId);
-    const nextState: WorkforceState = {
+    const pendingState: WorkforceState = {
       version: 1,
       nextOrdinal: record.ordinal,
       bots: state.bots.slice(0, -1),
+      pendingSessionDeletes: [...new Set([...state.pendingSessionDeletes, record.sessionId])],
     };
-    await saveWorkforceState({ directory: this.options.stateDirectory, state: nextState });
-    this.state = nextState;
+    await saveWorkforceState({ directory: this.options.stateDirectory, state: pendingState });
+    this.state = pendingState;
     this.activeBots.delete(record.slug);
     active.planStore.invalidate();
     active.bot.stop();
     await active.controller.close();
     await active.bot.close();
+    await this.options.provisioner.deleteSession(record.sessionId);
+    const nextState: WorkforceState = {
+      ...pendingState,
+      pendingSessionDeletes: pendingState.pendingSessionDeletes.filter(sessionId => sessionId !== record.sessionId),
+    };
+    await saveWorkforceState({ directory: this.options.stateDirectory, state: nextState });
+    this.state = nextState;
     console.log(`Rolled back unplaced ${record.username}.`);
     return true;
   }
@@ -241,7 +269,14 @@ export class WorkforceManager {
         },
       });
       await controller.start();
-      const active: ActiveBot = { record, bot, planStore, actionQueue, controller };
+      const active: ActiveBot = {
+        record,
+        bot,
+        planStore,
+        actionQueue,
+        controller,
+        createdSession: resources.createdSession,
+      };
       this.activeBots.set(identity.slug, active);
       console.log(
         `${identity.username} (${identity.role}) attached to ${this.options.consoleBaseUrl.replace(/\/$/, '')}/sessions/${record.sessionId}`,

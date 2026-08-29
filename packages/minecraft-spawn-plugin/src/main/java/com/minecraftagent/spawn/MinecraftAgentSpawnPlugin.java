@@ -56,12 +56,12 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
         URI.create(
             environment("MINECRAFT_SPAWN_URL", "http://host.docker.internal:8793/spawn"));
     spawnToken = System.getenv("MINECRAFT_SPAWN_TOKEN");
-    if (spawnToken == null || spawnToken.isBlank() || spawnToken.trim().length() < 32) {
-      getLogger().severe("MINECRAFT_SPAWN_TOKEN must contain at least 32 characters; disabling /spawn.");
+    if (!validSpawnToken(spawnToken)) {
+      getLogger().severe(
+          "MINECRAFT_SPAWN_TOKEN must contain at least 32 characters without surrounding whitespace; disabling /spawn.");
       Bukkit.getPluginManager().disablePlugin(this);
       return;
     }
-    spawnToken = spawnToken.trim();
     botSkin = environment("MINECRAFT_BOT_SKIN", "Steve");
     if (!botSkin.matches("[A-Za-z0-9_]{1,32}")) {
       getLogger().warning("MINECRAFT_BOT_SKIN is invalid; using Steve.");
@@ -70,6 +70,10 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
     httpClient =
         HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
     getLogger().info("/spawn is connected to " + spawnEndpoint);
+  }
+
+  static boolean validSpawnToken(String token) {
+    return token != null && token.length() >= 32 && token.equals(token.trim());
   }
 
   @Override

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -239,6 +239,79 @@ describe('Minecraft workforce manager', () => {
     await manager.close();
   });
 
+  it('does not delete a session when the durable rollback commit fails', async () => {
+    const stateDirectory = await temporaryDirectory();
+    const deleteSession = vi.fn(async () => undefined);
+    const manager = new WorkforceManager(
+      managerOptions({
+        stateDirectory,
+        provisioner: {
+          ensureProvider: async () => undefined,
+          deleteSession,
+          provisionBot: async () => ({ agentId: 'agent-1', sessionId: 'session-1', createdSession: true }),
+        },
+        identities: [],
+      }),
+    );
+    await manager.start();
+    await manager.spawn();
+    await rm(stateDirectory, { recursive: true });
+    await writeFile(stateDirectory, 'blocks-directory-creation');
+
+    await expect(manager.rollback('ForgeBot1')).rejects.toThrow();
+    expect(deleteSession).not.toHaveBeenCalled();
+    expect(manager.list()).toEqual([expect.objectContaining({ username: 'ForgeBot1', sessionId: 'session-1' })]);
+    await manager.close();
+  });
+
+  it('durably retries a session deletion interrupted during rollback', async () => {
+    const stateDirectory = await temporaryDirectory();
+    const firstDelete = vi.fn(async () => {
+      throw new Error('TrueForge unavailable');
+    });
+    const first = new WorkforceManager(
+      managerOptions({
+        stateDirectory,
+        provisioner: {
+          ensureProvider: async () => undefined,
+          deleteSession: firstDelete,
+          provisionBot: async () => ({ agentId: 'agent-1', sessionId: 'session-1', createdSession: true }),
+        },
+        identities: [],
+      }),
+    );
+    await first.start();
+    await first.spawn();
+
+    await expect(first.rollback('ForgeBot1')).rejects.toThrow('TrueForge unavailable');
+    expect(first.list()).toEqual([]);
+    expect(await loadWorkforceState(stateDirectory)).toMatchObject({
+      bots: [],
+      pendingSessionDeletes: ['session-1'],
+    });
+    await first.close();
+
+    const retryDelete = vi.fn(async () => undefined);
+    const restarted = new WorkforceManager(
+      managerOptions({
+        stateDirectory,
+        provisioner: {
+          ensureProvider: async () => undefined,
+          deleteSession: retryDelete,
+          provisionBot: async () => {
+            throw new Error('No bot should be restored.');
+          },
+        },
+        identities: [],
+      }),
+    );
+    await restarted.start();
+
+    expect(retryDelete).toHaveBeenCalledWith('session-1');
+    expect(await loadWorkforceState(stateDirectory)).toMatchObject({ pendingSessionDeletes: [] });
+    await restarted.close();
+  });
+
   it('cancels the active action queue when TrueForge reports a terminal turn', async () => {
     let onTurnCancelled: (() => void) | undefined;
     const options = managerOptions({
@@ -303,5 +376,58 @@ describe('Minecraft workforce manager', () => {
     await expect(manager.spawn()).rejects.toThrow('Could not activate ForgeBot1');
     expect(deleteSession).toHaveBeenCalledWith('new-session');
     await manager.close();
+  });
+
+  it('deletes replacement sessions when a later restoration fails', async () => {
+    const stateDirectory = await temporaryDirectory();
+    const initial = new WorkforceManager(
+      managerOptions({
+        stateDirectory,
+        provisioner: {
+          ensureProvider: async () => undefined,
+          deleteSession: async () => undefined,
+          provisionBot: async ({ identity }) => ({
+            agentId: `old-agent-${String(identity.ordinal)}`,
+            sessionId: `old-session-${String(identity.ordinal)}`,
+            createdSession: true,
+          }),
+        },
+        identities: [],
+      }),
+    );
+    await initial.start();
+    await initial.spawn();
+    await initial.spawn();
+    await initial.close();
+
+    const deleteSession = vi.fn(async () => undefined);
+    const options = managerOptions({
+      stateDirectory,
+      provisioner: {
+        ensureProvider: async () => undefined,
+        deleteSession,
+        provisionBot: async ({ identity }) => ({
+          agentId: `new-agent-${String(identity.ordinal)}`,
+          sessionId: `new-session-${String(identity.ordinal)}`,
+          createdSession: true,
+        }),
+      },
+      identities: [],
+    });
+    const createBot = options.createBot;
+    options.createBot = identity => {
+      const bot = createBot(identity);
+      if (identity.ordinal === 2) {
+        bot.start = async () => {
+          throw new Error('Second bot failed to connect.');
+        };
+      }
+      return bot;
+    };
+    const restored = new WorkforceManager(options);
+
+    await expect(restored.start()).rejects.toThrow('Could not restore the Minecraft workforce');
+    expect(deleteSession).toHaveBeenCalledWith('new-session-1');
+    await restored.close();
   });
 });

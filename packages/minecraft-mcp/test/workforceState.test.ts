@@ -31,6 +31,7 @@ describe('workforce state', () => {
       version: 1 as const,
       nextOrdinal: 2,
       bots: [{ ...identity, agentId: 'agent-1', sessionId: 'session-1' }],
+      pendingSessionDeletes: ['session-pending'],
     };
     await saveWorkforceState({ directory, state });
     expect(await loadWorkforceState(directory)).toEqual(state);
