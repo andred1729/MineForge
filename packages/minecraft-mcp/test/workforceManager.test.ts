@@ -14,6 +14,7 @@ import {
   type ManagedMinecraftBot,
   type WorkforceManagerOptions,
 } from '../src/workforceManager.js';
+import { loadWorkforceState } from '../src/workforceState.js';
 
 const temporaryDirectories: string[] = [];
 
@@ -158,5 +159,65 @@ describe('Minecraft workforce manager', () => {
       expect.objectContaining({ username: 'ForgeBot1', role: 'lumberjack', sessionId: 'session-1' }),
     ]);
     await restored.close();
+  });
+
+  it('persists replacement TrueForge resources discovered during restoration', async () => {
+    const stateDirectory = await temporaryDirectory();
+    const initial = new WorkforceManager(
+      managerOptions({
+        stateDirectory,
+        provisioner: {
+          ensureProvider: async () => undefined,
+          provisionBot: async () => ({ agentId: 'old-agent', sessionId: 'old-session' }),
+        },
+        identities: [],
+      }),
+    );
+    await initial.start();
+    await initial.spawn();
+    await initial.close();
+
+    const restored = new WorkforceManager(
+      managerOptions({
+        stateDirectory,
+        provisioner: {
+          ensureProvider: async () => undefined,
+          provisionBot: async () => ({ agentId: 'new-agent', sessionId: 'new-session' }),
+        },
+        identities: [],
+      }),
+    );
+    await restored.start();
+    expect(await loadWorkforceState(stateDirectory)).toMatchObject({
+      bots: [{ agentId: 'new-agent', sessionId: 'new-session' }],
+    });
+    await restored.close();
+  });
+
+  it('rolls back only the latest unplaced bot and reuses its slot', async () => {
+    const stateDirectory = await temporaryDirectory();
+    const manager = new WorkforceManager(
+      managerOptions({
+        stateDirectory,
+        provisioner: {
+          ensureProvider: async () => undefined,
+          provisionBot: async ({ identity }) => ({
+            agentId: `agent-${String(identity.ordinal)}`,
+            sessionId: `session-${String(identity.ordinal)}`,
+          }),
+        },
+        identities: [],
+      }),
+    );
+    await manager.start();
+    await manager.spawn();
+    await manager.spawn();
+
+    await expect(manager.rollback('ForgeBot1')).resolves.toBe(false);
+    await expect(manager.rollback('ForgeBot2')).resolves.toBe(true);
+    expect(manager.list().map(bot => bot.username)).toEqual(['ForgeBot1']);
+    expect(await loadWorkforceState(stateDirectory)).toMatchObject({ nextOrdinal: 2 });
+    await expect(manager.spawn()).resolves.toMatchObject({ username: 'ForgeBot2' });
+    await manager.close();
   });
 });

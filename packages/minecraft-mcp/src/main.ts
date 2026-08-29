@@ -4,31 +4,10 @@ import { createMinecraftMcpServer, startMinecraftMcpHttpServer } from './mcpServ
 import { MineflayerBot } from './mineflayerBot.js';
 import { SessionMirrorController } from './sessionMirrorController.js';
 import { startSpawnServer } from './spawnServer.js';
+import { waitForTrueForge } from './trueforgeHealth.js';
 import { TrueForgeSessionClient } from './trueforgePort.js';
 import { TrueForgeProvisioner } from './trueforgeProvisioner.js';
 import { WorkforceManager } from './workforceManager.js';
-
-async function waitForTrueForge({ baseUrl, signal }: { baseUrl: string; signal: AbortSignal }): Promise<void> {
-  const healthUrl = `${baseUrl.replace(/\/$/, '')}/healthz`;
-  while (!signal.aborted) {
-    try {
-      const response = await fetch(healthUrl, { signal });
-      if (response.ok) {
-        return;
-      }
-    } catch {
-      // TrueForge and the bridge start together in the local demo.
-    }
-    await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(resolve, 1_000);
-        signal.addEventListener('abort', () => {
-          clearTimeout(timer);
-          reject(signal.reason ?? new Error('Aborted'));
-        }, { once: true });
-      });
-  }
-  throw new Error('Minecraft workforce stopped before TrueForge became ready.');
-}
 
 function botSlugFromMcpPath(path: string): string | null {
   const match = /^\/bots\/(forgebot[1-5])\/mcp$/.exec(path);
@@ -102,6 +81,7 @@ export async function main(): Promise<void> {
     port: config.spawnPort,
     token: config.spawnToken,
     spawn: async () => await workforce.spawn(),
+    rollback: async username => await workforce.rollback(username),
   });
 
   try {

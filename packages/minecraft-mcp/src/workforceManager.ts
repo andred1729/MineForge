@@ -73,11 +73,18 @@ export class WorkforceManager {
       for (const record of state.bots) {
         await this.activate({ identity: record, existingRecord: record });
       }
-      const restoredState: WorkforceState = { ...state, bots: [...this.activeBots.values()].map(active => active.record) };
-        if (restoredState.bots.some((record, index) => record.sessionId !== state.bots[index]?.sessionId || record.agentId !== state.bots[index]?.agentId)) {
-          await saveWorkforceState({ directory: this.options.stateDirectory, state: restoredState });
-        }
-        this.state = restoredState;
+      const restoredState: WorkforceState = {
+        ...state,
+        bots: [...this.activeBots.values()].map(active => active.record),
+      };
+      const resourcesChanged = restoredState.bots.some((record, index) => {
+        const previous = state.bots[index];
+        return previous?.sessionId !== record.sessionId || previous.agentId !== record.agentId;
+      });
+      if (resourcesChanged) {
+        await saveWorkforceState({ directory: this.options.stateDirectory, state: restoredState });
+      }
+      this.state = restoredState;
     } catch (caught) {
       await this.closeActiveBots();
       throw new Error('Could not restore the Minecraft workforce.', { cause: caught });
@@ -86,6 +93,15 @@ export class WorkforceManager {
 
   spawn(): Promise<SpawnedBot> {
     const result = this.spawnSequence.then(async () => await this.spawnNext());
+    this.spawnSequence = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  rollback(username: string): Promise<boolean> {
+    const result = this.spawnSequence.then(async () => await this.rollbackLatest(username));
     this.spawnSequence = result.then(
       () => undefined,
       () => undefined,
@@ -156,6 +172,32 @@ export class WorkforceManager {
       await active.bot.close();
       throw new Error(`Could not persist ${identity.username}.`, { cause: caught });
     }
+  }
+
+  private async rollbackLatest(username: string): Promise<boolean> {
+    const state = this.requireState();
+    const record = state.bots.at(-1);
+    if (record?.username !== username) {
+      return false;
+    }
+    const active = this.activeBots.get(record.slug);
+    if (active === undefined) {
+      return false;
+    }
+    const nextState: WorkforceState = {
+      version: 1,
+      nextOrdinal: record.ordinal,
+      bots: state.bots.slice(0, -1),
+    };
+    await saveWorkforceState({ directory: this.options.stateDirectory, state: nextState });
+    this.state = nextState;
+    this.activeBots.delete(record.slug);
+    active.planStore.invalidate();
+    active.bot.stop();
+    await active.controller.close();
+    await active.bot.close();
+    console.log(`Rolled back unplaced ${record.username}.`);
+    return true;
   }
 
   private async activate({

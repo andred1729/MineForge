@@ -32,6 +32,8 @@ The host bot manager is authoritative for capacity and identity allocation. It m
 
 The plugin performs the HTTP call off the Paper main thread. After success it returns to the main thread, finds safe natural ground near the request coordinates, teleports the bot, grants its role-specific demo kit, and applies the classic skin through SkinsRestorer.
 
+Only one placement can be in flight at a time. If the bot cannot join, the world or natural ground is unavailable, or Paper rejects the teleport, the plugin sends an authenticated form POST to `/spawn/rollback` with `username=ForgeBotN`. The manager disconnects that latest bot, removes its durable workforce record, and makes the slot available again.
+
 ## Local configuration
 
 - `MINECRAFT_SPAWN_TOKEN` must match the host bot manager. The demo-only fallback is `minecraft-agent-local-demo`.

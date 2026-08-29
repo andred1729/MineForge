@@ -22,6 +22,7 @@ describe('Minecraft spawn ingress', () => {
       host: '127.0.0.1',
       port: 0,
       token: 'test-token-at-least-16-characters',
+      rollback: async () => false,
       spawn: async request => {
         requests.push(request.requester_name);
         return {
@@ -57,6 +58,7 @@ describe('Minecraft spawn ingress', () => {
       host: '127.0.0.1',
       port: 0,
       token: 'test-token-at-least-16-characters',
+      rollback: async () => false,
       spawn: async () => {
         throw new WorkforceCapacityError('Five bots are already active.');
       },
@@ -70,6 +72,41 @@ describe('Minecraft spawn ingress', () => {
       });
       expect(response.status).toBe(409);
       expect(await response.text()).toContain('Five bots');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('authenticates and forwards a failed placement rollback', async () => {
+    const rolledBack: string[] = [];
+    const server = startSpawnServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token-at-least-16-characters',
+      spawn: async () => {
+        throw new Error('Unexpected spawn.');
+      },
+      rollback: async username => {
+        rolledBack.push(username);
+        return true;
+      },
+    });
+    await server.listen();
+    try {
+      const endpoint = `http://127.0.0.1:${String(server.port())}/spawn/rollback`;
+      const denied = await fetch(endpoint, {
+        method: 'POST',
+        body: new URLSearchParams({ username: 'ForgeBot1' }),
+      });
+      expect(denied.status).toBe(401);
+
+      const accepted = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'x-minecraft-agent-token': 'test-token-at-least-16-characters' },
+        body: new URLSearchParams({ username: 'ForgeBot1' }),
+      });
+      expect(accepted.status).toBe(204);
+      expect(rolledBack).toEqual(['ForgeBot1']);
     } finally {
       await server.close();
     }

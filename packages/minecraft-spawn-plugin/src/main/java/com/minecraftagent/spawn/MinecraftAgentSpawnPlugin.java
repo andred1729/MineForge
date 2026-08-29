@@ -9,6 +9,7 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.bukkit.Bukkit;
 import org.bukkit.HeightMap;
 import org.bukkit.Location;
@@ -47,6 +48,7 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
   private URI spawnEndpoint;
   private String spawnToken;
   private String botSkin;
+  private final AtomicBoolean spawnInFlight = new AtomicBoolean();
 
   @Override
   public void onEnable() {
@@ -77,6 +79,10 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
     }
     if (requester.getWorld().getEnvironment() != World.Environment.NORMAL) {
       requester.sendMessage("ForgeBots can currently be spawned only in the Overworld.");
+      return true;
+    }
+    if (!spawnInFlight.compareAndSet(false, true)) {
+      requester.sendMessage("A ForgeBot spawn is already being placed. Try again in a moment.");
       return true;
     }
 
@@ -114,15 +120,18 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
       Throwable failure) {
     Player requester = Bukkit.getPlayer(requesterUuid);
     if (failure != null) {
+      spawnInFlight.set(false);
       getLogger().warning("ForgeBot spawn request failed: " + failure.getMessage());
       tell(requester, "The ForgeBot manager is unavailable. Check the demo process and try again.");
       return;
     }
     if (response.statusCode() == 409) {
+      spawnInFlight.set(false);
       tell(requester, "All five ForgeBots are already active.");
       return;
     }
     if (response.statusCode() != 201) {
+      spawnInFlight.set(false);
       getLogger().warning(
           "ForgeBot manager returned HTTP "
               + response.statusCode()
@@ -134,6 +143,7 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
 
     Optional<BotIdentity> parsed = BotIdentity.parse(response.body());
     if (parsed.isEmpty()) {
+      spawnInFlight.set(false);
       getLogger().warning("ForgeBot manager returned an invalid bot identity.");
       tell(requester, "The ForgeBot manager returned an invalid response.");
       return;
@@ -141,34 +151,60 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
     BotIdentity identity = parsed.get();
     Player bot = Bukkit.getPlayerExact(identity.username());
     if (bot == null) {
-      tell(requester, identity.username() + " was created but did not join Minecraft.");
+      rollback(identity, requester, "did not join Minecraft");
       return;
     }
 
     World world = Bukkit.getWorld(requestedLocation.getWorld().getUID());
     if (world == null) {
-      tell(requester, identity.username() + " joined, but the requested world is unavailable.");
+      rollback(identity, requester, "could not access the requested world");
       return;
     }
     Optional<Location> safeLocation = findSafeLocation(world, requestedLocation, identity.slot());
     if (safeLocation.isEmpty()) {
-      tell(requester, identity.username() + " joined, but no safe natural ground was found nearby.");
+      rollback(identity, requester, "could not find safe natural ground nearby");
       return;
     }
 
     if (!bot.teleport(safeLocation.get(), PlayerTeleportEvent.TeleportCause.PLUGIN)) {
-        tell(requester, identity.username() + " could not be placed safely. Try again.");
-        return;
-      }
+      rollback(identity, requester, "could not be placed safely");
+      return;
+    }
     bot.setFallDistance(0);
     giveStartingKit(bot, identity.slot());
     applyClassicSkin(identity.username());
+    spawnInFlight.set(false);
     tell(
         requester,
         identity.username()
             + " spawned nearby as the "
             + identity.role()
             + ". Open its TrueForge session to assign work.");
+  }
+
+  private void rollback(BotIdentity identity, Player requester, String reason) {
+    tell(requester, identity.username() + " " + reason + "; rolling back its slot.");
+    RollbackControlRequest request = new RollbackControlRequest(identity.username());
+    httpClient
+        .sendAsync(request.toHttpRequest(spawnEndpoint, spawnToken), HttpResponse.BodyHandlers.ofString())
+        .whenComplete(
+            (response, failure) -> {
+              spawnInFlight.set(false);
+              if (failure != null) {
+                getLogger().severe(
+                    "Could not roll back " + identity.username() + ": " + failure.getMessage());
+                return;
+              }
+              if (response.statusCode() != 204) {
+                getLogger().severe(
+                    "Rollback for "
+                        + identity.username()
+                        + " returned HTTP "
+                        + response.statusCode()
+                        + ": "
+                        + safeLogBody(response.body()));
+              }
+            });
   }
 
   private Optional<Location> findSafeLocation(World world, Location origin, int slot) {
