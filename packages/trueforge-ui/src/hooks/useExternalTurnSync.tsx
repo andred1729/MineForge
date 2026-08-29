@@ -19,7 +19,6 @@ export function ExternalTurnSync({ server, config }: { server: AgentUIServer; co
   const reload = useTrueFoundryReload();
   const reloadRef = useRef(reload);
   const latestTurnIdRef = useRef<string | null | undefined>(undefined);
-  const requestInFlightRef = useRef(false);
   reloadRef.current = reload;
 
   useEffect(() => {
@@ -27,43 +26,45 @@ export function ExternalTurnSync({ server, config }: { server: AgentUIServer; co
   }, [remoteId]);
 
   useEffect(() => {
-    if (isRunning || isLoading) {
-      // The runtime already owns locally-created turns. The next idle poll establishes
-      // a fresh baseline rather than reloading the turn that just finished here.
-      latestTurnIdRef.current = undefined;
-    }
-  }, [isLoading, isRunning]);
-
-  useEffect(() => {
     if (remoteId == null || isRunning || isLoading) {
       return;
     }
     const intervalMs = Math.max(config.intervalMs ?? 1_000, 250);
     let cancelled = false;
+      let requestInFlight = false;
 
     const poll = async () => {
-      if (cancelled || requestInFlightRef.current || document.visibilityState !== 'visible') {
+      if (cancelled || requestInFlight || document.visibilityState !== 'visible') {
         return;
       }
-      requestInFlightRef.current = true;
+      requestInFlight = true;
       try {
-        const page = await server.listTurns({ sessionId: remoteId, limit: 1 });
+        const page = await server.listTurns({ sessionId: remoteId, limit: 100 });
+          // listTurns is chronological; retrieve all pages and use the final row.
+          let newestTurnId = page.data.at(-1)?.id ?? null;
+          let nextPageToken = page.nextPageToken;
+          while (nextPageToken !== undefined) {
+            const nextPage = await server.listTurns({ sessionId: remoteId, limit: 100, pageToken: nextPageToken });
+            newestTurnId = nextPage.data.at(-1)?.id ?? newestTurnId;
+            nextPageToken = nextPage.nextPageToken;
+          }
         if (cancelled) {
           return;
         }
-        const newestTurnId = page.data[0]?.id ?? null;
+        
         if (latestTurnIdRef.current === undefined) {
-          latestTurnIdRef.current = newestTurnId;
+          
           return;
         }
         if (latestTurnIdRef.current !== newestTurnId) {
-          latestTurnIdRef.current = newestTurnId;
+          
           await reloadRef.current();
+            
         }
       } catch {
         // External synchronization is best-effort and must never disrupt chat.
       } finally {
-        requestInFlightRef.current = false;
+        requestInFlight = false;
       }
     };
 
