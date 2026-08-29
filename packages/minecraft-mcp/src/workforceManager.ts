@@ -170,6 +170,7 @@ export class WorkforceManager {
       active.bot.stop();
       await active.controller.close();
       await active.bot.close();
+      await this.options.provisioner.deleteSession(active.record.sessionId);
       throw new Error(`Could not persist ${identity.username}.`, { cause: caught });
     }
   }
@@ -184,6 +185,7 @@ export class WorkforceManager {
     if (active === undefined) {
       return false;
     }
+    await this.options.provisioner.deleteSession(record.sessionId);
     const nextState: WorkforceState = {
       version: 1,
       nextOrdinal: record.ordinal,
@@ -211,6 +213,7 @@ export class WorkforceManager {
       throw new Error(`${identity.username} is already active.`);
     }
     const bot = this.options.createBot(identity);
+    let createdSessionId: string | null = null;
     try {
       await bot.start();
       if (this.options.viewerBasePort !== undefined) {
@@ -220,7 +223,12 @@ export class WorkforceManager {
         identity,
         ...(existingRecord === undefined ? {} : { existingRecord }),
       });
-      const record: WorkforceBotRecord = { ...identity, ...resources };
+      createdSessionId = resources.createdSession ? resources.sessionId : null;
+      const record: WorkforceBotRecord = {
+        ...identity,
+        agentId: resources.agentId,
+        sessionId: resources.sessionId,
+      };
       const planStore = new PlanStore();
       const actionQueue = new MinecraftActionQueue();
       const session = this.options.createSessionClient(record);
@@ -228,6 +236,7 @@ export class WorkforceManager {
         bot,
         session,
         onTurnCancelled: () => {
+          actionQueue.cancelActive();
           planStore.invalidate();
         },
       });
@@ -241,6 +250,13 @@ export class WorkforceManager {
     } catch (caught) {
       bot.stop();
       await bot.close();
+      if (createdSessionId !== null) {
+        try {
+          await this.options.provisioner.deleteSession(createdSessionId);
+        } catch (cleanupError) {
+          console.error(`Could not delete failed TrueForge session ${createdSessionId}.`, cleanupError);
+        }
+      }
       throw new Error(`Could not activate ${identity.username}.`, { cause: caught });
     }
   }

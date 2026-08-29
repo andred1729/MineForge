@@ -102,9 +102,11 @@ describe('Minecraft workforce manager', () => {
     const identities: BotIdentity[] = [];
     const provisioner: TrueForgeProvisionerPort = {
       ensureProvider: async () => undefined,
+      deleteSession: async () => undefined,
       provisionBot: async ({ identity }) => ({
         agentId: `agent-${String(identity.ordinal)}`,
         sessionId: `session-${String(identity.ordinal)}`,
+        createdSession: true,
       }),
     };
     const manager = new WorkforceManager(
@@ -129,7 +131,8 @@ describe('Minecraft workforce manager', () => {
     const stateDirectory = await temporaryDirectory();
     const firstProvisioner: TrueForgeProvisionerPort = {
       ensureProvider: async () => undefined,
-      provisionBot: async () => ({ agentId: 'agent-1', sessionId: 'session-1' }),
+      deleteSession: async () => undefined,
+      provisionBot: async () => ({ agentId: 'agent-1', sessionId: 'session-1', createdSession: true }),
     };
     const first = new WorkforceManager(
       managerOptions({ stateDirectory, provisioner: firstProvisioner, identities: [] }),
@@ -141,12 +144,13 @@ describe('Minecraft workforce manager', () => {
     const restoredRecords: string[] = [];
     const secondProvisioner: TrueForgeProvisionerPort = {
       ensureProvider: async () => undefined,
+      deleteSession: async () => undefined,
       provisionBot: async ({ existingRecord }) => {
         if (existingRecord === undefined) {
           throw new Error('Expected a persisted bot record.');
         }
         restoredRecords.push(existingRecord.sessionId);
-        return { agentId: existingRecord.agentId, sessionId: existingRecord.sessionId };
+        return { agentId: existingRecord.agentId, sessionId: existingRecord.sessionId, createdSession: false };
       },
     };
     const restored = new WorkforceManager(
@@ -168,7 +172,12 @@ describe('Minecraft workforce manager', () => {
         stateDirectory,
         provisioner: {
           ensureProvider: async () => undefined,
-          provisionBot: async () => ({ agentId: 'old-agent', sessionId: 'old-session' }),
+          deleteSession: async () => undefined,
+          provisionBot: async () => ({
+            agentId: 'old-agent',
+            sessionId: 'old-session',
+            createdSession: true,
+          }),
         },
         identities: [],
       }),
@@ -182,7 +191,12 @@ describe('Minecraft workforce manager', () => {
         stateDirectory,
         provisioner: {
           ensureProvider: async () => undefined,
-          provisionBot: async () => ({ agentId: 'new-agent', sessionId: 'new-session' }),
+          deleteSession: async () => undefined,
+          provisionBot: async () => ({
+            agentId: 'new-agent',
+            sessionId: 'new-session',
+            createdSession: true,
+          }),
         },
         identities: [],
       }),
@@ -196,14 +210,17 @@ describe('Minecraft workforce manager', () => {
 
   it('rolls back only the latest unplaced bot and reuses its slot', async () => {
     const stateDirectory = await temporaryDirectory();
+    const deleteSession = vi.fn(async () => undefined);
     const manager = new WorkforceManager(
       managerOptions({
         stateDirectory,
         provisioner: {
           ensureProvider: async () => undefined,
+          deleteSession,
           provisionBot: async ({ identity }) => ({
             agentId: `agent-${String(identity.ordinal)}`,
             sessionId: `session-${String(identity.ordinal)}`,
+            createdSession: true,
           }),
         },
         identities: [],
@@ -215,9 +232,76 @@ describe('Minecraft workforce manager', () => {
 
     await expect(manager.rollback('ForgeBot1')).resolves.toBe(false);
     await expect(manager.rollback('ForgeBot2')).resolves.toBe(true);
+    expect(deleteSession).toHaveBeenCalledWith('session-2');
     expect(manager.list().map(bot => bot.username)).toEqual(['ForgeBot1']);
     expect(await loadWorkforceState(stateDirectory)).toMatchObject({ nextOrdinal: 2 });
     await expect(manager.spawn()).resolves.toMatchObject({ username: 'ForgeBot2' });
+    await manager.close();
+  });
+
+  it('cancels the active action queue when TrueForge reports a terminal turn', async () => {
+    let onTurnCancelled: (() => void) | undefined;
+    const options = managerOptions({
+      stateDirectory: await temporaryDirectory(),
+      provisioner: {
+        ensureProvider: async () => undefined,
+        deleteSession: async () => undefined,
+        provisionBot: async () => ({
+          agentId: 'agent-1',
+          sessionId: 'session-1',
+          createdSession: true,
+        }),
+      },
+      identities: [],
+    });
+    options.createController = controllerOptions => {
+      onTurnCancelled = controllerOptions.onTurnCancelled;
+      return { start: async () => undefined, close: async () => undefined };
+    };
+    const manager = new WorkforceManager(options);
+    await manager.start();
+    await manager.spawn();
+    const context = manager.resolveBySlug('forgebot1');
+    if (context === null) {
+      throw new Error('Expected ForgeBot1 to be active.');
+    }
+    const cancelActive = vi.spyOn(context.actionQueue, 'cancelActive');
+
+    if (onTurnCancelled === undefined) {
+      throw new Error('Expected the controller cancellation callback.');
+    }
+    onTurnCancelled();
+
+    expect(cancelActive).toHaveBeenCalledOnce();
+    await manager.close();
+  });
+
+  it('deletes a newly created TrueForge session when activation fails', async () => {
+    const deleteSession = vi.fn(async () => undefined);
+    const options = managerOptions({
+      stateDirectory: await temporaryDirectory(),
+      provisioner: {
+        ensureProvider: async () => undefined,
+        deleteSession,
+        provisionBot: async () => ({
+          agentId: 'agent-1',
+          sessionId: 'new-session',
+          createdSession: true,
+        }),
+      },
+      identities: [],
+    });
+    options.createController = () => ({
+      start: async () => {
+        throw new Error('Controller startup failed.');
+      },
+      close: async () => undefined,
+    });
+    const manager = new WorkforceManager(options);
+    await manager.start();
+
+    await expect(manager.spawn()).rejects.toThrow('Could not activate ForgeBot1');
+    expect(deleteSession).toHaveBeenCalledWith('new-session');
     await manager.close();
   });
 });

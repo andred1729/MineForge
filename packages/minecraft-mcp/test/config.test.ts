@@ -20,6 +20,7 @@ describe('Minecraft configuration', () => {
     const config = loadWorkforceConfig({
       MINECRAFT_MODEL_FQN: 'openai/gpt-5-4-mini',
       OPEN_AI_KEY: 'test-key',
+      MINECRAFT_SPAWN_TOKEN: 'test-spawn-token-with-32-characters',
     });
     expect(config.modelFqn).toBe('openai/gpt-5-4-mini');
     expect(config.openaiApiKey).toBe('test-key');
@@ -29,12 +30,18 @@ describe('Minecraft configuration', () => {
     const config = loadWorkforceConfig({
       MINECRAFT_MODEL_FQN: 'openai/gpt-5-4-mini',
       OPENAI_API_KEY: 'fallback-key',
+      MINECRAFT_SPAWN_TOKEN: 'test-spawn-token-with-32-characters',
     });
     expect(config.openaiApiKey).toBe('fallback-key');
   });
 
-  it('uses the shared local spawn token by default', () => {
-    const config = loadWorkforceConfig({ MINECRAFT_MODEL_FQN: 'openai/gpt-5-4-mini' });
-    expect(config.spawnToken).toBe('minecraft-agent-local-demo');
+  it('requires a private spawn token of at least 32 characters', () => {
+    expect(() => loadWorkforceConfig({ MINECRAFT_MODEL_FQN: 'openai/gpt-5-4-mini' })).toThrow();
+    expect(() =>
+      loadWorkforceConfig({
+        MINECRAFT_MODEL_FQN: 'openai/gpt-5-4-mini',
+        MINECRAFT_SPAWN_TOKEN: 'too-short',
+      }),
+    ).toThrow();
   });
 });

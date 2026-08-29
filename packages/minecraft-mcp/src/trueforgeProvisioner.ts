@@ -7,6 +7,7 @@ import type { WorkforceBotRecord } from './workforceState.js';
 export interface ProvisionedBotResources {
   agentId: string;
   sessionId: string;
+  createdSession: boolean;
 }
 
 export interface TrueForgeProvisionerPort {
@@ -15,6 +16,7 @@ export interface TrueForgeProvisionerPort {
     identity: BotIdentity;
     existingRecord?: WorkforceBotRecord;
   }): Promise<ProvisionedBotResources>;
+  deleteSession(sessionId: string): Promise<void>;
 }
 
 export interface TrueForgeProvisionerOptions {
@@ -96,14 +98,18 @@ export class TrueForgeProvisioner implements TrueForgeProvisionerPort {
     if (existingRecord?.agentId === agent.id) {
       try {
         const existingSession = await this.client.sessions.get(existingRecord.sessionId);
-        return { agentId: agent.id, sessionId: existingSession.data.id };
+        return { agentId: agent.id, sessionId: existingSession.data.id, createdSession: false };
       } catch (caught) {
         console.warn(`Stored session for ${identity.username} is unavailable; creating a replacement.`, caught);
       }
     }
 
     const session = await this.client.sessions.create({ agent: { name: identity.agentName } });
-    return { agentId: agent.id, sessionId: session.data.id };
+    return { agentId: agent.id, sessionId: session.data.id, createdSession: true };
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.client.sessions.delete(sessionId);
   }
 
   private async configureProvider(): Promise<void> {

@@ -36,7 +36,7 @@ Only one placement can be in flight at a time. If the bot cannot join, the world
 
 ## Local configuration
 
-- `MINECRAFT_SPAWN_TOKEN` must match the host bot manager. The demo-only fallback is `minecraft-agent-local-demo`.
+- `MINECRAFT_SPAWN_TOKEN` is required, must contain at least 32 characters, and must match the host bot manager. `pnpm minecraft:demo` generates an ephemeral value when one is not configured.
 - `MINECRAFT_SPAWN_URL` can override the host endpoint.
 - `MINECRAFT_BOT_SKIN` selects the cached SkinsRestorer skin name and defaults to `Steve`.
 

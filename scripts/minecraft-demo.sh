@@ -13,9 +13,8 @@ if [[ -z "${MINECRAFT_MODEL_FQN:-}" ]]; then
   exit 2
 fi
 
-# Shared only between the local Paper plugin and host bot manager. Override it
-# in .env when the spawn ingress is reachable beyond Docker Desktop.
-export MINECRAFT_SPAWN_TOKEN="${MINECRAFT_SPAWN_TOKEN:-minecraft-agent-local-demo}"
+# Generate an ephemeral credential shared only by the local Paper plugin and host manager.
+export MINECRAFT_SPAWN_TOKEN="${MINECRAFT_SPAWN_TOKEN:-$(node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('hex'))")}"
 
 pnpm minecraft:server:up
 pnpm --filter @truefoundry/trueforge-sdk build

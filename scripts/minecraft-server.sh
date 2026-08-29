@@ -8,7 +8,7 @@ server_image='minecraft-agent-paper:local'
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 workspace_directory="$(cd "$script_directory/.." && pwd)"
 spawn_url="${MINECRAFT_SPAWN_URL:-http://host.docker.internal:8793/spawn}"
-spawn_token="${MINECRAFT_SPAWN_TOKEN:-minecraft-agent-local-demo}"
+spawn_token="${MINECRAFT_SPAWN_TOKEN:-}"
 bot_skin="${MINECRAFT_BOT_SKIN:-Steve}"
 
 build_server_image() {
@@ -37,6 +37,10 @@ container_has_environment() {
 }
 
 start_server() {
+  if [[ -z "$spawn_token" ]]; then
+    echo 'Set MINECRAFT_SPAWN_TOKEN to a random value of at least 32 characters, or use pnpm minecraft:demo.' >&2
+    exit 2
+  fi
   build_server_image
   prepare_skins_volume
   if container_exists; then
