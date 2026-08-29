@@ -112,7 +112,13 @@ export class MineflayerBot implements MinecraftBotPort {
           throw new Error('Mineflayer failed before spawning.');
         }),
       ]);
-      bot.pathfinder.setMovements(new Movements(bot));
+      const movements = new Movements(bot);
+      // Pathfinding is navigation only. World mutation must happen through the
+      // explicitly authorized gather/build loops so it can be counted and stopped.
+      movements.canDig = false;
+      movements.allow1by1towers = false;
+      movements.scafoldingBlocks = [];
+      bot.pathfinder.setMovements(movements);
     } catch (caught) {
       this.bot = null;
       bot.end('Connection failed');
@@ -287,7 +293,39 @@ export class MineflayerBot implements MinecraftBotPort {
           bot.stopDigging();
         },
       });
-      await this.moveToColumn({ target: integerPosition(block.position), plan, signal, assertAuthorized });
+      await new Promise(resolve => setTimeout(resolve, 150));
+      if (bot.inventory.count(itemType.id, null) <= itemCountBeforeDig) {
+        const droppedItem = bot.nearestEntity(
+          entity =>
+            entity.name === 'item' &&
+            entity.position.distanceTo(block.position) <= 4 &&
+            isPositionWithinPlanBounds({ plan, position: integerPosition(entity.position) }),
+        );
+        if (droppedItem !== null) {
+          try {
+            await this.runBoundedPathfinder({
+              plan,
+              signal,
+              assertAuthorized,
+              navigate: async () => {
+                await bot.pathfinder.goto(new goals.GoalFollow(droppedItem, 0));
+              },
+            });
+          } catch (caught) {
+            if (bot.inventory.count(itemType.id, null) <= itemCountBeforeDig) {
+              throw caught;
+            }
+          }
+        } else {
+          await this.moveTo({
+            target: integerPosition(block.position),
+            range: 1,
+            plan,
+            signal,
+            assertAuthorized,
+          });
+        }
+      }
       const currentItemCount = await waitForItemCountAtLeast({
         readItemCount: () => bot.inventory.count(itemType.id, null),
         expectedItemCount: itemCountBeforeDig + 1,
@@ -531,28 +569,6 @@ export class MineflayerBot implements MinecraftBotPort {
       }
     }
     return null;
-  }
-
-  private async moveToColumn({
-    target,
-    plan,
-    signal,
-    assertAuthorized,
-  }: {
-    target: Position;
-    plan: Plan;
-    signal: AbortSignal;
-    assertAuthorized: () => void;
-  }): Promise<void> {
-    const bot = this.requireBot();
-    await this.runBoundedPathfinder({
-      plan,
-      signal,
-      assertAuthorized,
-      navigate: async () => {
-        await bot.pathfinder.goto(new goals.GoalXZ(target.x, target.z));
-      },
-    });
   }
 
   private async runBoundedPathfinder({
