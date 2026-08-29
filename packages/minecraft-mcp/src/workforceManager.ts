@@ -73,7 +73,11 @@ export class WorkforceManager {
       for (const record of state.bots) {
         await this.activate({ identity: record, existingRecord: record });
       }
-      this.state = state;
+      const restoredState: WorkforceState = { ...state, bots: [...this.activeBots.values()].map(active => active.record) };
+        if (restoredState.bots.some((record, index) => record.sessionId !== state.bots[index]?.sessionId || record.agentId !== state.bots[index]?.agentId)) {
+          await saveWorkforceState({ directory: this.options.stateDirectory, state: restoredState });
+        }
+        this.state = restoredState;
     } catch (caught) {
       await this.closeActiveBots();
       throw new Error('Could not restore the Minecraft workforce.', { cause: caught });
