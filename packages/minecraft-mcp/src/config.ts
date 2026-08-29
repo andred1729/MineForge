@@ -69,7 +69,7 @@ export function loadBootstrapConfig(env: NodeJS.ProcessEnv = process.env): Boots
   return BootstrapConfigSchema.parse({
     ...loadMinecraftConfig(env),
     modelFqn: env['MINECRAFT_MODEL_FQN'],
-    openaiApiKey: env['OPENAI_API_KEY'] ?? env['OPEN_AI_KEY'],
+    openaiApiKey: env['OPEN_AI_KEY'] ?? env['OPENAI_API_KEY'],
     agentName: env['MINECRAFT_AGENT_NAME'],
     connectorName: env['MINECRAFT_CONNECTOR_NAME'],
   });
