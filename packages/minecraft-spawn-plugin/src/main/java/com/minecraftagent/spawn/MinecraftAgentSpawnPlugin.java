@@ -98,7 +98,6 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
             requestedLocation.getYaw(),
             requestedLocation.getPitch());
 
-    requester.sendMessage("Requesting a ForgeBot from TrueForge...");
     httpClient
         .sendAsync(
             request.toHttpRequest(spawnEndpoint, spawnToken),
