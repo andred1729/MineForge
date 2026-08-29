@@ -92,6 +92,7 @@ export async function main(): Promise<void> {
               bot: context.bot,
               planStore: context.planStore,
               actionQueue: context.actionQueue,
+              role: context.record.role,
               blueprintCatalog,
               additionalPlanOrigins: demoWorksitesForRole(context.record.role),
               ...(context.record.role === 'builder'
@@ -111,8 +112,9 @@ export async function main(): Promise<void> {
     host: config.spawnHost,
     port: config.spawnPort,
     token: config.spawnToken,
-    spawn: async request => await workforce.spawn(request.requested_role),
+    spawn: async request => await workforce.spawn(request.role ?? request.requested_role),
     rollback: async username => await workforce.rollback(username),
+    ready: async username => await workforce.ready(username),
   });
 
   try {

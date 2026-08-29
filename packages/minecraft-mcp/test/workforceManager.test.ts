@@ -50,9 +50,11 @@ function fakeBot(identity: Pick<BotIdentity, 'username'>): ManagedMinecraftBot {
     position: () => observation.position,
     inspect: () => observation,
     locateNaturalTrees: () => [],
+    locateAnimals: () => [],
     moveTo: vi.fn(async () => undefined),
     gather: vi.fn(async ({ count }) => ({ requested: count, completed: count, details: [] })),
     harvestTrees: vi.fn(async ({ count }) => ({ requested: count, completed: count, details: [] })),
+    huntAnimals: vi.fn(async ({ count }) => ({ requested: count, completed: count, details: [] })),
     craft: vi.fn(async ({ count }) => ({ requested: count, completed: count, details: [] })),
     executeBlueprint: vi.fn(async ({ blocks }) => ({
       requested: blocks.length,

@@ -50,9 +50,11 @@ function fakeBot(): MinecraftBotPort {
     position: () => observation.position,
     inspect: () => observation,
     locateNaturalTrees: () => [],
+    locateAnimals: () => [],
     moveTo: async () => {},
     gather: async ({ count }) => ({ requested: count, completed: count, details: [] }),
     harvestTrees: async ({ count }) => ({ requested: count, completed: count, details: [] }),
+    huntAnimals: async ({ count }) => ({ requested: count, completed: count, details: [] }),
     craft: async ({ count }) => ({ requested: count, completed: count, details: [] }),
     executeBlueprint: async ({ blocks }) => ({ requested: blocks.length, completed: blocks.length, details: [] }),
     drop: async ({ count }) => ({ requested: count, completed: count, details: [] }),
@@ -290,6 +292,67 @@ describe('Minecraft MCP server', () => {
     );
     expect(JSON.parse(firstText(harvested))).toMatchObject({ requested: 4, completed: 5 });
     expect(harvestTrees).toHaveBeenCalledOnce();
+
+    await client.close();
+    await server.close();
+  });
+
+  it('exposes hunting only to the hunter and requires an approved hunt plan', async () => {
+    const bot = fakeBot();
+    const huntAnimals = vi.fn<MinecraftBotPort['huntAnimals']>(async ({ count }) => ({
+      requested: count,
+      completed: count,
+      details: ['Killed unnamed cow; collected 2 beef, 1 leather.'],
+    }));
+    bot.locateAnimals = () => [{ id: 42, species: 'cow', distance: 6, position: { x: 6, y: 64, z: 0 } }];
+    bot.huntAnimals = huntAnimals;
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createMinecraftMcpServer({
+      bot,
+      planStore: new PlanStore(),
+      actionQueue: new MinecraftActionQueue(),
+      role: 'hunter',
+    });
+    const client = new Client({ name: 'minecraft-hunter-test', version: '1.0.0' });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const catalog = await client.listTools();
+    expect(catalog.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(['locate_animals', 'hunt_animals']));
+    const located = TextResultSchema.parse(
+      await client.callTool({ name: 'locate_animals', arguments: { species: 'cow', max_distance: 16 } }),
+    );
+    expect(JSON.parse(firstText(located))).toMatchObject({ animals: [{ id: 42, species: 'cow' }] });
+
+    const denied = TextResultSchema.parse(
+      await client.callTool({
+        name: 'hunt_animals',
+        arguments: { plan_id: 'missing', species: 'cow', count: 1, max_distance: 16 },
+      }),
+    );
+    expect(denied.isError).toBe(true);
+
+    const begun = TextResultSchema.parse(
+      await client.callTool({
+        name: 'begin_plan',
+        arguments: {
+          summary: 'Hunt one cow',
+          steps: ['Locate an eligible cow', 'Hunt and collect verified drops'],
+          permitted_actions: ['hunt'],
+          duration_minutes: 5,
+          radius_blocks: 16,
+        },
+      }),
+    );
+    const parsedPlan = z.object({ plan: z.object({ id: z.string() }) }).parse(JSON.parse(firstText(begun)));
+    const hunted = TextResultSchema.parse(
+      await client.callTool({
+        name: 'hunt_animals',
+        arguments: { plan_id: parsedPlan.plan.id, species: 'cow', count: 1, max_distance: 16 },
+      }),
+    );
+    expect(JSON.parse(firstText(hunted))).toMatchObject({ requested: 1, completed: 1 });
+    expect(huntAnimals).toHaveBeenCalledOnce();
 
     await client.close();
     await server.close();

@@ -5,7 +5,8 @@ const ROLE_GUIDANCE: Record<BotRole, string> = {
   miner: 'Your specialty is safe mining. Do not dig straight down, enter lava or water, or attack another player.',
   builder:
     'Your specialty is structured building. Import linked GrabCraft blueprints, obtain explicit creative/helper approvals, and use exact bridge-owned batches rather than improvising thousands of coordinates.',
-  hunter: 'Your specialty is hunting passive animals. Never attack a player, villager, pet, or other person.',
+  hunter:
+    'Your specialty is bounded hunting of passive animals. Use locate_animals and hunt_animals only for cows, pigs, sheep, or chickens. Never attack a player, villager, pet, named animal, baby animal, mounted animal, or hostile mob.',
   scout: 'Your specialty is observation and exploration. Prefer read-only inspection and bounded movement.',
 };
 

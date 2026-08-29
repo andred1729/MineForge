@@ -8,8 +8,10 @@ import { z } from 'zod';
 
 import { MinecraftActionQueue } from './actionQueue.js';
 import type { MinecraftBotPort } from './botPort.js';
+import type { BotRole } from './botRoles.js';
 import { BeginPlanInputSchema, BlueprintSchema, PlanOutcomeSchema, PositionSchema, type Position } from './domain.js';
 import { BlueprintCatalog, importGrabcraftBlueprint, type ImportedBlueprint } from './grabcraftBlueprint.js';
+import { HuntSpeciesSchema } from './hunting.js';
 import { PlanStore } from './planStore.js';
 
 const FORBIDDEN_BLUEPRINT_BLOCKS = new Set([
@@ -148,6 +150,7 @@ export function createMinecraftMcpServer({
   enableCreativeMode,
   spawnBuildHelpers,
   resolveBuildWorker,
+  role,
 }: {
   bot: MinecraftBotPort;
   planStore: PlanStore;
@@ -158,6 +161,7 @@ export function createMinecraftMcpServer({
   enableCreativeMode?: () => Promise<void>;
   spawnBuildHelpers?: (count: number) => Promise<{ id: string; username: string }[]>;
   resolveBuildWorker?: (workerId: string) => { bot: MinecraftBotPort; actionQueue: MinecraftActionQueue } | null;
+  role?: BotRole;
 }): McpServer {
   const server = new McpServer({ name: 'minecraft-agent', version: '0.1.0' });
 
@@ -191,6 +195,23 @@ export function createMinecraftMcpServer({
     async ({ block_name: blockName, max_distance: maxDistance }) =>
       await executeTool(() => ({ trees: bot.locateNaturalTrees({ blockName, maxDistance }) })),
   );
+
+  if (role === 'hunter') {
+    server.registerTool(
+      'locate_animals',
+      {
+        description:
+          'Locate nearby unnamed passive animals of one approved species. Players, villagers, pets, named animals, and hostile mobs are never returned.',
+        inputSchema: z.object({
+          species: HuntSpeciesSchema,
+          max_distance: z.number().int().min(1).max(32).default(24),
+        }),
+        annotations: { readOnlyHint: true, openWorldHint: true },
+      },
+      async ({ species, max_distance: maxDistance }) =>
+        await executeTool(() => ({ animals: bot.locateAnimals({ species, maxDistance }) })),
+    );
+  }
 
   server.registerTool(
     'announce',
@@ -446,6 +467,42 @@ export function createMinecraftMcpServer({
         },
       }),
   );
+
+  if (role === 'hunter') {
+    server.registerTool(
+      'hunt_animals',
+      {
+        description:
+          'Pursue and kill a bounded number of unnamed passive animals, then collect and report verified drops. Only cows, pigs, sheep, and chickens are eligible.',
+        inputSchema: z.object({
+          plan_id: PlanIdSchema,
+          species: HuntSpeciesSchema,
+          count: z.number().int().min(1).max(8),
+          max_distance: z.number().int().min(1).max(32).default(24),
+        }),
+        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+      },
+      async ({ plan_id: planId, species, count, max_distance: maxDistance }, extra) =>
+        await executeActionTool({
+          signal: extra.signal,
+          bot,
+          planStore,
+          actionQueue,
+          operation: async activeSignal => {
+            const plan = planStore.require({ planId, action: 'hunt' });
+            const boundedDistance = Math.min(maxDistance, plan.radiusBlocks);
+            return await bot.huntAnimals({
+              species,
+              count,
+              maxDistance: boundedDistance,
+              plan,
+              signal: activeSignal,
+              assertAuthorized: () => planStore.require({ planId, action: 'hunt' }),
+            });
+          },
+        }),
+    );
+  }
 
   server.registerTool(
     'craft_item',

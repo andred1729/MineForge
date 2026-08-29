@@ -52,6 +52,17 @@ export function createBotIdentity(ordinal: number, requestedRole?: BotRole): Bot
   });
 }
 
+export function roleActivationMessage(identity: BotIdentity): string {
+  const equipment: Record<BotRole, string> = {
+    lumberjack: 'given a stone axe',
+    miner: 'given an iron pickaxe',
+    builder: 'given building supplies',
+    hunter: 'given an iron sword',
+    scout: 'given a compass and spyglass',
+  };
+  return `${roleLabel(identity.role)} — ${identity.username} · ${equipment[identity.role]}`;
+}
+
 export function roleLabel(role: BotRole): string {
   return ROLE_LABELS[role];
 }

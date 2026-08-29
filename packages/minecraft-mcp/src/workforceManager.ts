@@ -1,6 +1,6 @@
 import { MinecraftActionQueue } from './actionQueue.js';
 import type { MinecraftBotPort } from './botPort.js';
-import { createBotIdentity, type BotIdentity, type BotRole } from './botRoles.js';
+import { createBotIdentity, roleActivationMessage, type BotIdentity, type BotRole } from './botRoles.js';
 import { PlanStore } from './planStore.js';
 import type { TrueForgeSessionPort } from './trueforgePort.js';
 import type { TrueForgeProvisionerPort } from './trueforgeProvisioner.js';
@@ -39,6 +39,7 @@ export interface BuildWorkerContext {
 
 interface ActiveBot extends WorkforceBotContext {
   controller: SessionMirrorPort;
+  session: TrueForgeSessionPort;
 }
 
 export interface SessionMirrorPort {
@@ -113,6 +114,15 @@ export class WorkforceManager {
 
   rollback(username: string): Promise<boolean> {
     const result = this.spawnSequence.then(async () => await this.rollbackLatest(username));
+    this.spawnSequence = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  ready(username: string): Promise<boolean> {
+    const result = this.spawnSequence.then(async () => await this.initializeSession(username));
     this.spawnSequence = result.then(
       () => undefined,
       () => undefined,
@@ -256,6 +266,18 @@ export class WorkforceManager {
     return true;
   }
 
+  private async initializeSession(username: string): Promise<boolean> {
+    const active = [...this.activeBots.values()].find(entry => entry.record.username === username);
+    if (active === undefined) {
+      return false;
+    }
+    if ((await active.session.latestTurn()) !== null) {
+      return true;
+    }
+    await active.session.createUserTurn(roleActivationMessage(active.record));
+    return true;
+  }
+
   private async activate({
     identity,
     existingRecord,
@@ -286,10 +308,11 @@ export class WorkforceManager {
         acceptMinecraftChat: identity.role === 'builder',
         onTurnCancelled: () => {
           planStore.invalidate();
+          actionQueue.cancelActive();
         },
       });
       await controller.start();
-      const active: ActiveBot = { record, bot, planStore, actionQueue, controller };
+      const active: ActiveBot = { record, bot, planStore, actionQueue, controller, session };
       this.activeBots.set(identity.slug, active);
       console.log(
         `${identity.username} (${identity.role}) attached to ${this.options.consoleBaseUrl.replace(/\/$/, '')}/sessions/${record.sessionId}`,

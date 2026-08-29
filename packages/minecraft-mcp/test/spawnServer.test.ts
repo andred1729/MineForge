@@ -24,8 +24,9 @@ describe('Minecraft spawn ingress', () => {
       port: 0,
       token: 'test-token-at-least-16-characters',
       rollback: async () => false,
+      ready: async () => false,
       spawn: async request => {
-        requests.push({ requester: request.requester_name, role: request.requested_role });
+        requests.push({ requester: request.requester_name, role: request.requested_role ?? request.role ?? 'missing' });
         return {
           username: 'ForgeBot1',
           role: 'lumberjack',
@@ -54,12 +55,58 @@ describe('Minecraft spawn ingress', () => {
     }
   });
 
+  it('accepts the rebuilt role contract and acknowledges Paper placement readiness', async () => {
+    const ready: string[] = [];
+    const server = startSpawnServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token-at-least-16-characters',
+      rollback: async () => false,
+      ready: async username => {
+        ready.push(username);
+        return true;
+      },
+      spawn: async () => ({
+        username: 'ForgeBot3',
+        role: 'builder',
+        agentName: 'forgebot3-builder',
+        sessionId: 'session-3',
+        consoleUrl: 'http://127.0.0.1:8790/sessions/session-3',
+      }),
+    });
+    await server.listen();
+    try {
+      const rebuiltForm = new URLSearchParams(FORM);
+      rebuiltForm.delete('requested_role');
+      rebuiltForm.set('role', 'builder');
+      const headers = { 'x-minecraft-agent-token': 'test-token-at-least-16-characters' };
+      const spawned = await fetch(`http://127.0.0.1:${String(server.port())}/spawn`, {
+        method: 'POST',
+        headers,
+        body: rebuiltForm,
+      });
+      expect(spawned.status).toBe(201);
+      expect(await spawned.text()).toBe('ForgeBot3:builder');
+
+      const initialized = await fetch(`http://127.0.0.1:${String(server.port())}/spawn/ready`, {
+        method: 'POST',
+        headers,
+        body: new URLSearchParams({ username: 'ForgeBot3' }),
+      });
+      expect(initialized.status).toBe(204);
+      expect(ready).toEqual(['ForgeBot3']);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('reports the workforce capacity conflict to the command plugin', async () => {
     const server = startSpawnServer({
       host: '127.0.0.1',
       port: 0,
       token: 'test-token-at-least-16-characters',
       rollback: async () => false,
+      ready: async () => false,
       spawn: async () => {
         throw new WorkforceCapacityError('Five bots are already active.');
       },
@@ -91,6 +138,7 @@ describe('Minecraft spawn ingress', () => {
         rolledBack.push(username);
         return true;
       },
+      ready: async () => false,
     });
     await server.listen();
     try {

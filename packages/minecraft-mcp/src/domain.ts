@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const ActionSchema = z.enum(['move', 'gather', 'craft', 'build', 'drop']);
+export const ActionSchema = z.enum(['move', 'gather', 'craft', 'build', 'hunt', 'drop']);
 export type Action = z.infer<typeof ActionSchema>;
 
 export const PositionSchema = z.object({
