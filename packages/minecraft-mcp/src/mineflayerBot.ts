@@ -1,4 +1,5 @@
 import { once } from 'node:events';
+import { createServer } from 'node:net';
 
 import mineflayer, { type Bot } from 'mineflayer';
 import pathfinderPlugin from 'mineflayer-pathfinder';
@@ -31,6 +32,21 @@ function integerPosition(position: Vec3): Position {
 
 function abortError(): Error {
   return new Error('Minecraft action was cancelled.');
+}
+
+export async function isTcpPortAvailable(port: number): Promise<boolean> {
+  return await new Promise<boolean>(resolve => {
+    const probe = createServer();
+    probe.unref();
+    probe.once('error', () => {
+      resolve(false);
+    });
+    probe.listen(port, () => {
+      probe.close(error => {
+        resolve(error === undefined);
+      });
+    });
+  });
 }
 
 async function wait({ milliseconds, signal }: { milliseconds: number; signal: AbortSignal }): Promise<void> {
@@ -149,7 +165,11 @@ export class MineflayerBot implements MinecraftBotPort {
     return Promise.resolve();
   }
 
-  startViewer(port: number): void {
+  async startViewer(port: number): Promise<void> {
+    if (!(await isTcpPortAvailable(port))) {
+      console.warn(`Prismarine viewer port ${String(port)} is already in use; continuing without this viewer.`);
+      return;
+    }
     startMineflayerViewer(this.requireBot(), { port, firstPerson: false, viewDistance: 8 });
   }
 

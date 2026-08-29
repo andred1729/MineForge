@@ -44,7 +44,7 @@ function fakeBot(identity: BotIdentity): ManagedMinecraftBot {
   return {
     start: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
-    startViewer: vi.fn(),
+    startViewer: vi.fn(async () => undefined),
     isConnected: () => true,
     position: () => observation.position,
     inspect: () => observation,

@@ -12,7 +12,7 @@ import {
 } from './workforceState.js';
 
 export interface ManagedMinecraftBot extends MinecraftBotPort {
-  startViewer(port: number): void;
+  startViewer(port: number): Promise<void>;
 }
 
 export interface WorkforceBotContext {
@@ -168,7 +168,7 @@ export class WorkforceManager {
     try {
       await bot.start();
       if (this.options.viewerBasePort !== undefined) {
-        bot.startViewer(this.options.viewerBasePort + identity.ordinal - 1);
+        await bot.startViewer(this.options.viewerBasePort + identity.ordinal - 1);
       }
       const resources = await this.options.provisioner.provisionBot({
         identity,
