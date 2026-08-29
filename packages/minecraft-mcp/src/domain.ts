@@ -8,7 +8,11 @@ export const PositionSchema = z.object({
   y: z.number().int(),
   z: z.number().int(),
 });
-export type Position = z.infer<typeof PositionSchema>;
+export interface Position {
+  x: number;
+  y: number;
+  z: number;
+}
 
 export const BeginPlanInputSchema = z.object({
   summary: z.string().min(1).max(500),
@@ -40,6 +44,7 @@ export const PlanSchema = z.object({
   steps: z.array(z.string()),
   permittedActions: z.array(ActionSchema),
   origin: PositionSchema,
+  additionalOrigins: z.array(PositionSchema).max(5).optional(),
   radiusBlocks: z.number().int().positive(),
   createdAt: z.number().int().nonnegative(),
   expiresAt: z.number().int().positive(),

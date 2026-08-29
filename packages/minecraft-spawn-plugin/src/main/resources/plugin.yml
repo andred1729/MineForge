@@ -1,0 +1,15 @@
+name: MinecraftAgentSpawn
+version: '0.1.0'
+main: com.minecraftagent.spawn.MinecraftAgentSpawnPlugin
+api-version: '1.21'
+description: Creates TrueForge-controlled Mineflayer workers through /spawn.
+softdepend: [SkinsRestorer]
+commands:
+  spawn:
+    description: Spawn the next TrueForge-controlled ForgeBot.
+    usage: /spawn
+    permission: minecraftagent.spawn
+permissions:
+  minecraftagent.spawn:
+    description: Allows a player to request a ForgeBot.
+    default: true

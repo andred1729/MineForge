@@ -3,9 +3,26 @@ import { randomUUID } from 'node:crypto';
 import type { Action, BeginPlanInput, Plan, Position } from './domain.js';
 
 export function isPositionWithinPlanBounds({ plan, position }: { plan: Plan; position: Position }): boolean {
-  const dx = position.x - plan.origin.x;
-  const dz = position.z - plan.origin.z;
-  return Math.hypot(dx, dz) <= plan.radiusBlocks;
+  const distanceToSegment = (end: Position): number => {
+    const segmentX = end.x - plan.origin.x;
+    const segmentZ = end.z - plan.origin.z;
+    const lengthSquared = segmentX * segmentX + segmentZ * segmentZ;
+    if (lengthSquared === 0) {
+      return Math.hypot(position.x - plan.origin.x, position.z - plan.origin.z);
+    }
+    const projection =
+      ((position.x - plan.origin.x) * segmentX + (position.z - plan.origin.z) * segmentZ) / lengthSquared;
+    const boundedProjection = Math.max(0, Math.min(1, projection));
+    const closestX = plan.origin.x + boundedProjection * segmentX;
+    const closestZ = plan.origin.z + boundedProjection * segmentZ;
+    return Math.hypot(position.x - closestX, position.z - closestZ);
+  };
+
+  const additionalOrigins = plan.additionalOrigins ?? [];
+  if (additionalOrigins.length === 0) {
+    return distanceToSegment(plan.origin) <= plan.radiusBlocks;
+  }
+  return additionalOrigins.some(origin => distanceToSegment(origin) <= plan.radiusBlocks);
 }
 
 export class PlanStore {
@@ -13,7 +30,15 @@ export class PlanStore {
 
   constructor(private readonly now: () => number = Date.now) {}
 
-  begin({ input, origin }: { input: BeginPlanInput; origin: Position }): Plan {
+  begin({
+    input,
+    origin,
+    additionalOrigins = [],
+  }: {
+    input: BeginPlanInput;
+    origin: Position;
+    additionalOrigins?: Position[];
+  }): Plan {
     if (this.current() !== null) {
       throw new Error('A plan is already active. Finish or stop it before beginning another plan.');
     }
@@ -24,6 +49,7 @@ export class PlanStore {
       steps: [...input.steps],
       permittedActions: [...new Set(input.permitted_actions)],
       origin,
+      additionalOrigins: additionalOrigins.map(additionalOrigin => ({ ...additionalOrigin })),
       radiusBlocks: input.radius_blocks,
       createdAt,
       expiresAt: createdAt + input.duration_minutes * 60_000,
@@ -57,7 +83,9 @@ export class PlanStore {
 
   assertWithinBounds({ plan, position }: { plan: Plan; position: Position }): void {
     if (!isPositionWithinPlanBounds({ plan, position })) {
-      throw new Error(`Target is outside the approved ${String(plan.radiusBlocks)}-block plan radius.`);
+      throw new Error(
+        `Target is outside the approved ${String(plan.radiusBlocks)}-block plan corridor and work areas.`,
+      );
     }
   }
 

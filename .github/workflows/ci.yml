@@ -73,6 +73,11 @@ jobs:
               - 'pnpm-workspace.yaml'
               - 'tsconfig.base.json'
               - '.github/workflows/ci.yml'
+            minecraft-spawn-plugin:
+              - 'packages/minecraft-spawn-plugin/**'
+              - 'scripts/minecraft-*.sh'
+              - 'package.json'
+              - '.github/workflows/ci.yml'
             store:
               - 'packages/trueforge/src/db/**'
               - 'packages/trueforge/tests/db/**'
@@ -104,6 +109,7 @@ jobs:
           FRONTEND: ${{ steps.filter.outputs.frontend }}
           TRUEFORGE_UI: ${{ steps.filter.outputs['trueforge-ui'] }}
           MINECRAFT_MCP: ${{ steps.filter.outputs['minecraft-mcp'] }}
+          MINECRAFT_SPAWN_PLUGIN: ${{ steps.filter.outputs['minecraft-spawn-plugin'] }}
         run: |
           node <<'EOF' >> "$GITHUB_OUTPUT"
           const changedPackages = [];
@@ -112,6 +118,7 @@ jobs:
           if (process.env.FRONTEND === 'true') changedPackages.push('frontend');
           if (process.env.TRUEFORGE_UI === 'true') changedPackages.push('trueforge-ui');
           if (process.env.MINECRAFT_MCP === 'true') changedPackages.push('minecraft-mcp');
+          if (process.env.MINECRAFT_SPAWN_PLUGIN === 'true') changedPackages.push('minecraft-spawn-plugin');
           console.log(`list=${JSON.stringify(changedPackages)}`);
           EOF
 
