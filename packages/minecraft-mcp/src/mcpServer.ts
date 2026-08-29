@@ -8,13 +8,7 @@ import { z } from 'zod';
 
 import { MinecraftActionQueue } from './actionQueue.js';
 import type { MinecraftBotPort } from './botPort.js';
-import {
-  BeginPlanInputSchema,
-  BlueprintSchema,
-  PlanOutcomeSchema,
-  PositionSchema,
-  type PlanTerminalEvent,
-} from './domain.js';
+import { BeginPlanInputSchema, BlueprintSchema, PlanOutcomeSchema, PositionSchema } from './domain.js';
 import { PlanStore } from './planStore.js';
 
 const FORBIDDEN_BLUEPRINT_BLOCKS = new Set([
@@ -63,32 +57,20 @@ async function executeActionTool<T>({
   bot: MinecraftBotPort;
   planStore: PlanStore;
   actionQueue: MinecraftActionQueue;
-  operation: () => Promise<T>;
+  operation: (activeSignal: AbortSignal) => Promise<T>;
 }) {
-  let active = false;
   const handleAbort = () => {
     planStore.invalidate();
-    if (active) {
-      bot.stop();
-    }
+    bot.stop();
   };
-  signal.addEventListener('abort', handleAbort, { once: true });
   try {
     return await actionQueue.run({
       signal,
-      operation: async () => {
-        active = true;
-        try {
-          return await executeTool(operation);
-        } finally {
-          active = false;
-        }
-      },
+      onAbort: handleAbort,
+      operation: async activeSignal => await executeTool(async () => await operation(activeSignal)),
     });
   } catch (caught) {
     return toolError(caught);
-  } finally {
-    signal.removeEventListener('abort', handleAbort);
   }
 }
 
@@ -129,12 +111,10 @@ export function createMinecraftMcpServer({
   bot,
   planStore,
   actionQueue,
-  onPlanTerminal,
 }: {
   bot: MinecraftBotPort;
   planStore: PlanStore;
   actionQueue: MinecraftActionQueue;
-  onPlanTerminal: (event: PlanTerminalEvent) => void;
 }): McpServer {
   const server = new McpServer({ name: 'minecraft-agent', version: '0.1.0' });
 
@@ -183,10 +163,16 @@ export function createMinecraftMcpServer({
         bot,
         planStore,
         actionQueue,
-        operation: async () => {
+        operation: async activeSignal => {
           const plan = planStore.require({ planId, action: 'move' });
           planStore.assertWithinBounds({ plan, position: target });
-          await bot.moveTo({ target, range, plan, signal: extra.signal });
+          await bot.moveTo({
+            target,
+            range,
+            plan,
+            signal: activeSignal,
+            assertAuthorized: () => planStore.require({ planId, action: 'move' }),
+          });
           return { position: bot.position() };
         },
       }),
@@ -210,7 +196,7 @@ export function createMinecraftMcpServer({
         bot,
         planStore,
         actionQueue,
-        operation: async () => {
+        operation: async activeSignal => {
           const plan = planStore.require({ planId, action: 'gather' });
           const boundedDistance = Math.min(maxDistance, plan.radiusBlocks);
           return await bot.gather({
@@ -218,7 +204,8 @@ export function createMinecraftMcpServer({
             count,
             maxDistance: boundedDistance,
             plan,
-            signal: extra.signal,
+            signal: activeSignal,
+            assertAuthorized: () => planStore.require({ planId, action: 'gather' }),
           });
         },
       }),
@@ -241,9 +228,14 @@ export function createMinecraftMcpServer({
         bot,
         planStore,
         actionQueue,
-        operation: async () => {
+        operation: async activeSignal => {
           planStore.require({ planId, action: 'craft' });
-          return await bot.craft({ itemName, count, signal: extra.signal });
+          return await bot.craft({
+            itemName,
+            count,
+            signal: activeSignal,
+            assertAuthorized: () => planStore.require({ planId, action: 'craft' }),
+          });
         },
       }),
   );
@@ -262,9 +254,15 @@ export function createMinecraftMcpServer({
         bot,
         planStore,
         actionQueue,
-        operation: async () => {
+        operation: async activeSignal => {
           const plan = validateBlueprint({ planStore, planId, origin, blocks });
-          return await bot.executeBlueprint({ origin, blocks, plan, signal: extra.signal });
+          return await bot.executeBlueprint({
+            origin,
+            blocks,
+            plan,
+            signal: activeSignal,
+            assertAuthorized: () => planStore.require({ planId, action: 'build' }),
+          });
         },
       }),
   );
@@ -286,9 +284,14 @@ export function createMinecraftMcpServer({
         bot,
         planStore,
         actionQueue,
-        operation: async () => {
+        operation: async activeSignal => {
           planStore.require({ planId, action: 'drop' });
-          return await bot.drop({ itemName, count, signal: extra.signal });
+          return await bot.drop({
+            itemName,
+            count,
+            signal: activeSignal,
+            assertAuthorized: () => planStore.require({ planId, action: 'drop' }),
+          });
         },
       }),
   );
@@ -312,8 +315,6 @@ export function createMinecraftMcpServer({
         actionQueue,
         operation: async () => {
           planStore.finish(planId);
-          const event: PlanTerminalEvent = { type: 'plan_terminal', planId, outcome, summary };
-          onPlanTerminal(event);
           await bot.say(`Plan ${outcome}: ${summary}`);
           return { outcome, summary };
         },
@@ -339,19 +340,85 @@ export function createMinecraftMcpServer({
   return server;
 }
 
-async function readJsonBody(request: IncomingMessage): Promise<unknown> {
-  request.setEncoding('utf8');
-  const body = await new Promise<string>((resolve, reject) => {
-    let value = '';
-    request.on('data', (chunk: string) => {
-      value += chunk;
-    });
-    request.on('end', () => {
-      resolve(value);
-    });
-    request.on('error', reject);
+const MAX_REQUEST_BYTES = 1_000_000;
+const REQUEST_TIMEOUT_MS = 30_000;
+const HEADERS_TIMEOUT_MS = 10_000;
+
+class RequestBodyError extends Error {
+  constructor(
+    message: string,
+    readonly statusCode: number,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+  }
+}
+
+async function readJsonBody(
+  request: IncomingMessage,
+  { maxBytes, timeoutMs }: { maxBytes: number; timeoutMs: number },
+): Promise<unknown> {
+  const body = await new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let settled = false;
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      request.removeListener('data', handleData);
+      request.removeListener('end', handleEnd);
+      request.removeListener('error', handleError);
+      request.removeListener('aborted', handleAborted);
+    };
+    const fail = (error: Error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      request.resume();
+      reject(error);
+    };
+    const handleData = (chunk: Buffer | string) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.byteLength;
+      if (size > maxBytes) {
+        fail(new RequestBodyError('Request body is too large.', 413));
+        return;
+      }
+      chunks.push(buffer);
+    };
+    const handleEnd = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(Buffer.concat(chunks, size));
+    };
+    const handleError = (error: Error) => {
+      fail(error);
+    };
+    const handleAborted = () => {
+      fail(new RequestBodyError('Request was aborted.', 400));
+    };
+    const timeout = setTimeout(() => {
+      fail(new RequestBodyError('Request body timed out.', 408));
+    }, timeoutMs);
+
+    request.on('data', handleData);
+    request.once('end', handleEnd);
+    request.once('error', handleError);
+    request.once('aborted', handleAborted);
   });
-  return body.length === 0 ? undefined : JSON.parse(body);
+  if (body.length === 0) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(body.toString('utf8'));
+  } catch (caught) {
+    throw new RequestBodyError('Request body is not valid JSON.', 400, { cause: caught });
+  }
 }
 
 function writeMethodNotAllowed(response: ServerResponse): void {
@@ -401,10 +468,14 @@ export function startMinecraftMcpHttpServer({
   host,
   port,
   createServerForRequest,
+  maxRequestBytes = MAX_REQUEST_BYTES,
+  requestTimeoutMs = REQUEST_TIMEOUT_MS,
 }: {
   host: string;
   port: number;
   createServerForRequest: () => McpServer;
+  maxRequestBytes?: number;
+  requestTimeoutMs?: number;
 }) {
   const httpServer = createServer((request, response) => {
     if (request.url === '/healthz' && request.method === 'GET') {
@@ -418,26 +489,40 @@ export function startMinecraftMcpHttpServer({
     }
 
     void (async () => {
-      const mcpServer = createServerForRequest();
-      const transport = new CompatibleStreamableTransport();
+      let mcpServer: McpServer | null = null;
+      let transport: CompatibleStreamableTransport | null = null;
       try {
-        const body = await readJsonBody(request);
+        const body = await readJsonBody(request, { maxBytes: maxRequestBytes, timeoutMs: requestTimeoutMs });
+        mcpServer = createServerForRequest();
+        transport = new CompatibleStreamableTransport();
         await mcpServer.connect(transport);
         await transport.handleRequest(request, response, body);
       } catch (caught) {
-        console.error('Minecraft MCP request failed', caught);
-        if (!response.headersSent) {
-          response.writeHead(500, { 'content-type': 'application/json' });
+        const statusCode = caught instanceof RequestBodyError ? caught.statusCode : 500;
+        if (!(caught instanceof RequestBodyError)) {
+          console.error('Minecraft MCP request failed', caught);
+        }
+        if (!response.headersSent && !response.destroyed) {
+          response.writeHead(statusCode, { connection: 'close', 'content-type': 'application/json' });
           response.end(
-            JSON.stringify({ jsonrpc: '2.0', error: { code: -32_603, message: 'Internal server error' }, id: null }),
+            JSON.stringify({
+              jsonrpc: '2.0',
+              error: {
+                code: statusCode === 500 ? -32_603 : -32_600,
+                message: caught instanceof RequestBodyError ? caught.message : 'Internal server error',
+              },
+              id: null,
+            }),
           );
         }
       } finally {
-        await transport.close();
-        await mcpServer.close();
+        await transport?.close();
+        await mcpServer?.close();
       }
     })();
   });
+  httpServer.requestTimeout = requestTimeoutMs;
+  httpServer.headersTimeout = Math.min(HEADERS_TIMEOUT_MS, requestTimeoutMs);
 
   return {
     async listen(): Promise<void> {
@@ -448,6 +533,13 @@ export function startMinecraftMcpHttpServer({
           resolve();
         });
       });
+    },
+    port(): number {
+      const address = httpServer.address();
+      if (address === null || typeof address === 'string') {
+        throw new Error('Minecraft MCP server is not listening on a TCP port.');
+      }
+      return address.port;
     },
     async close(): Promise<void> {
       await new Promise<void>((resolve, reject) => {

@@ -32,7 +32,7 @@ function abortError(): Error {
   return new Error('Minecraft action was cancelled.');
 }
 
-async function runAbortable<T>({
+export async function runAbortable<T>({
   signal,
   operation,
   stop,
@@ -46,14 +46,29 @@ async function runAbortable<T>({
   }
 
   return await new Promise<T>((resolve, reject) => {
+    let aborted = false;
     const handleAbort = () => {
+      if (aborted) {
+        return;
+      }
+      aborted = true;
       stop();
-      reject(abortError());
     };
     signal.addEventListener('abort', handleAbort, { once: true });
+    if (signal.aborted) {
+      handleAbort();
+    }
     void operation()
-      .then(resolve)
-      .catch(reject)
+      .then(value => {
+        if (aborted) {
+          reject(abortError());
+        } else {
+          resolve(value);
+        }
+      })
+      .catch((caught: unknown) => {
+        reject(aborted ? abortError() : caught instanceof Error ? caught : new Error('Minecraft action failed.'));
+      })
       .finally(() => {
         signal.removeEventListener('abort', handleAbort);
       });
@@ -179,24 +194,34 @@ export class MineflayerBot implements MinecraftBotPort {
     range,
     plan,
     signal,
+    assertAuthorized,
   }: {
     target: Position;
     range: number;
     plan: Plan;
     signal: AbortSignal;
+    assertAuthorized: () => void;
   }): Promise<void> {
     const bot = this.requireBot();
     await runAbortable({
       signal,
       operation: async () => {
+        assertAuthorized();
         let rejectBoundary: ((reason: Error) => void) | undefined;
         const boundaryViolation = new Promise<never>((_resolve, reject) => {
           rejectBoundary = reject;
         });
         const checkBounds = () => {
-          if (!isPositionWithinPlanBounds({ plan, position: integerPosition(bot.entity.position) })) {
+          try {
+            assertAuthorized();
+            if (isPositionWithinPlanBounds({ plan, position: integerPosition(bot.entity.position) })) {
+              return;
+            }
             bot.pathfinder.stop();
             rejectBoundary?.(new Error(`Path left the approved ${String(plan.radiusBlocks)}-block plan radius.`));
+          } catch (caught) {
+            bot.pathfinder.stop();
+            rejectBoundary?.(caught instanceof Error ? caught : new Error('Minecraft plan authorization failed.'));
           }
         };
         bot.on('physicsTick', checkBounds);
@@ -221,12 +246,14 @@ export class MineflayerBot implements MinecraftBotPort {
     maxDistance,
     plan,
     signal,
+    assertAuthorized,
   }: {
     blockName: string;
     count: number;
     maxDistance: number;
     plan: Plan;
     signal: AbortSignal;
+    assertAuthorized: () => void;
   }): Promise<ActionProgress> {
     const bot = this.requireBot();
     const blockType = bot.registry.blocksByName[blockName];
@@ -240,6 +267,7 @@ export class MineflayerBot implements MinecraftBotPort {
       if (signal.aborted) {
         throw abortError();
       }
+      assertAuthorized();
       const block = bot.findBlock({
         matching: candidate =>
           candidate.type === blockType.id &&
@@ -249,11 +277,21 @@ export class MineflayerBot implements MinecraftBotPort {
       if (block === null) {
         break;
       }
-      await this.moveTo({ target: integerPosition(block.position), range: 2, plan, signal });
+      await this.moveTo({ target: integerPosition(block.position), range: 2, plan, signal, assertAuthorized });
       const tool = bot.pathfinder.bestHarvestTool(block);
       if (tool !== null) {
-        await bot.equip(tool, 'hand');
+        assertAuthorized();
+        await runAbortable({
+          signal,
+          operation: async () => {
+            await bot.equip(tool, 'hand');
+          },
+          stop: () => {
+            // Mineflayer exposes no equip cancellation; serialization waits for it to settle.
+          },
+        });
       }
+      assertAuthorized();
       await runAbortable({
         signal,
         operation: async () => {
@@ -273,10 +311,12 @@ export class MineflayerBot implements MinecraftBotPort {
     itemName,
     count,
     signal,
+    assertAuthorized,
   }: {
     itemName: string;
     count: number;
     signal: AbortSignal;
+    assertAuthorized: () => void;
   }): Promise<ActionProgress> {
     const bot = this.requireBot();
     const itemType = bot.registry.itemsByName[itemName];
@@ -297,6 +337,7 @@ export class MineflayerBot implements MinecraftBotPort {
       throw new Error(`Not enough ingredients to craft ${String(count)} ${itemName}.`);
     }
 
+    assertAuthorized();
     await runAbortable({
       signal,
       operation: async () => {
@@ -315,11 +356,13 @@ export class MineflayerBot implements MinecraftBotPort {
     blocks,
     plan,
     signal,
+    assertAuthorized,
   }: {
     origin: Position;
     blocks: BlueprintBlock[];
     plan: Plan;
     signal: AbortSignal;
+    assertAuthorized: () => void;
   }): Promise<ActionProgress> {
     const bot = this.requireBot();
     const ordered = [...blocks].sort((left, right) => {
@@ -338,6 +381,7 @@ export class MineflayerBot implements MinecraftBotPort {
       if (signal.aborted) {
         throw abortError();
       }
+      assertAuthorized();
       const target = new Vec3(origin.x + operation.dx, origin.y + operation.dy, origin.z + operation.dz);
       const existing = bot.blockAt(target);
       if (existing?.name === operation.block || (operation.block === 'air' && existing?.name === 'air')) {
@@ -345,12 +389,13 @@ export class MineflayerBot implements MinecraftBotPort {
         continue;
       }
 
-      await this.moveTo({ target: integerPosition(target), range: 3, plan, signal });
+      await this.moveTo({ target: integerPosition(target), range: 3, plan, signal, assertAuthorized });
       if (operation.block === 'air') {
         if (existing === null || existing.name === 'air') {
           completed += 1;
           continue;
         }
+        assertAuthorized();
         await runAbortable({
           signal,
           operation: async () => {
@@ -365,11 +410,21 @@ export class MineflayerBot implements MinecraftBotPort {
         if (item === undefined) {
           throw new Error(`Missing ${operation.block} in inventory after ${String(completed)} blueprint operations.`);
         }
-        await bot.equip(item, 'hand');
+        assertAuthorized();
+        await runAbortable({
+          signal,
+          operation: async () => {
+            await bot.equip(item, 'hand');
+          },
+          stop: () => {
+            // Mineflayer exposes no equip cancellation; serialization waits for it to settle.
+          },
+        });
         const placement = this.findPlacementReference(target);
         if (placement === null) {
           throw new Error(`No supporting face is available to place ${operation.block} at ${target.toString()}.`);
         }
+        assertAuthorized();
         await runAbortable({
           signal,
           operation: async () => {
@@ -391,10 +446,12 @@ export class MineflayerBot implements MinecraftBotPort {
     itemName,
     count,
     signal,
+    assertAuthorized,
   }: {
     itemName: string;
     count: number;
     signal: AbortSignal;
+    assertAuthorized: () => void;
   }): Promise<ActionProgress> {
     const bot = this.requireBot();
     const item = bot.inventory.items().find(candidate => candidate.name === itemName);
@@ -402,6 +459,7 @@ export class MineflayerBot implements MinecraftBotPort {
       throw new Error(`${itemName} is not in the bot inventory.`);
     }
     const dropCount = Math.min(count, item.count);
+    assertAuthorized();
     await runAbortable({
       signal,
       operation: async () => {

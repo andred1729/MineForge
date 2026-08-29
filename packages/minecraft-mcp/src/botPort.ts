@@ -44,22 +44,40 @@ export interface MinecraftBotPort {
   isConnected(): boolean;
   position(): Position;
   inspect(options: { radius: number }): WorldObservation;
-  moveTo(options: { target: Position; range: number; plan: Plan; signal: AbortSignal }): Promise<void>;
+  moveTo(options: {
+    target: Position;
+    range: number;
+    plan: Plan;
+    signal: AbortSignal;
+    assertAuthorized: () => void;
+  }): Promise<void>;
   gather(options: {
     blockName: string;
     count: number;
     maxDistance: number;
     plan: Plan;
     signal: AbortSignal;
+    assertAuthorized: () => void;
   }): Promise<ActionProgress>;
-  craft(options: { itemName: string; count: number; signal: AbortSignal }): Promise<ActionProgress>;
+  craft(options: {
+    itemName: string;
+    count: number;
+    signal: AbortSignal;
+    assertAuthorized: () => void;
+  }): Promise<ActionProgress>;
   executeBlueprint(options: {
     origin: Position;
     blocks: BlueprintBlock[];
     plan: Plan;
     signal: AbortSignal;
+    assertAuthorized: () => void;
   }): Promise<ActionProgress>;
-  drop(options: { itemName: string; count: number; signal: AbortSignal }): Promise<ActionProgress>;
+  drop(options: {
+    itemName: string;
+    count: number;
+    signal: AbortSignal;
+    assertAuthorized: () => void;
+  }): Promise<ActionProgress>;
   stop(): void;
   say(message: string): Promise<void>;
   onChat(listener: (event: { username: string; message: string }) => void): () => void;
