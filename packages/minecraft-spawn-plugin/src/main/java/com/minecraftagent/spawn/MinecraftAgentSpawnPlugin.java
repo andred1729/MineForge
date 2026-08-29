@@ -156,7 +156,10 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
       return;
     }
 
-    bot.teleport(safeLocation.get(), PlayerTeleportEvent.TeleportCause.PLUGIN);
+    if (!bot.teleport(safeLocation.get(), PlayerTeleportEvent.TeleportCause.PLUGIN)) {
+        tell(requester, identity.username() + " could not be placed safely. Try again.");
+        return;
+      }
     bot.setFallDistance(0);
     giveStartingKit(bot, identity.slot());
     applyClassicSkin(identity.username());
