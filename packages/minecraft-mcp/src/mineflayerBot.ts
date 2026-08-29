@@ -512,6 +512,15 @@ export class MineflayerBot implements MinecraftBotPort {
           },
         });
         mined += 1;
+        await this.collectDrops({
+          target: { x: position.x, y: tree.root.y, z: position.z },
+          itemTypeId: itemType.id,
+          previousCount: treeStartingCount,
+          expectedIncrease: mined,
+          plan,
+          signal,
+          assertAuthorized,
+        });
       }
 
       await this.collectDrops({

@@ -18,6 +18,10 @@ const SpawnRequestSchema = z.object({
 });
 export type SpawnRequest = z.infer<typeof SpawnRequestSchema>;
 
+const RollbackRequestSchema = z.object({
+  username: z.string().regex(/^ForgeBot[1-5]$/),
+});
+
 const MAX_BODY_BYTES = 8_192;
 const BODY_TIMEOUT_MS = 5_000;
 
@@ -31,7 +35,7 @@ function authorized(request: IncomingMessage, expectedToken: string): boolean {
   return supplied.length === expected.length && timingSafeEqual(supplied, expected);
 }
 
-async function readForm(request: IncomingMessage): Promise<SpawnRequest> {
+async function readForm(request: IncomingMessage): Promise<Record<string, string>> {
   const body = await new Promise<string>((resolve, reject) => {
     let value = '';
     let settled = false;
@@ -80,7 +84,7 @@ async function readForm(request: IncomingMessage): Promise<SpawnRequest> {
     request.once('aborted', handleAborted);
   });
   const form = new URLSearchParams(body);
-  return SpawnRequestSchema.parse(Object.fromEntries(form));
+  return Object.fromEntries(form);
 }
 
 function writeJson(response: ServerResponse, status: number, value: unknown): void {
@@ -98,18 +102,20 @@ export function startSpawnServer({
   port,
   token,
   spawn,
+  rollback,
 }: {
   host: string;
   port: number;
   token: string;
   spawn: (request: SpawnRequest) => Promise<SpawnedBot>;
+  rollback: (username: string) => Promise<boolean>;
 }) {
   const server = createServer((request, response) => {
     if (request.method === 'GET' && request.url === '/healthz') {
       writeJson(response, 200, { status: 'ok' });
       return;
     }
-    if (request.method !== 'POST' || request.url !== '/spawn') {
+    if (request.method !== 'POST' || (request.url !== '/spawn' && request.url !== '/spawn/rollback')) {
       writeJson(response, 404, { error: 'Not found.' });
       return;
     }
@@ -119,7 +125,14 @@ export function startSpawnServer({
     }
     void (async () => {
       try {
-        const input = await readForm(request);
+        const form = await readForm(request);
+        if (request.url === '/spawn/rollback') {
+          const input = RollbackRequestSchema.parse(form);
+          const rolledBack = await rollback(input.username);
+          writeText(response, rolledBack ? 204 : 409, '');
+          return;
+        }
+        const input = SpawnRequestSchema.parse(form);
         console.log(`Minecraft /spawn requested by ${input.requester_name} in ${input.world_name}.`);
         const bot = await spawn(input);
         writeText(response, 201, bot.username);
