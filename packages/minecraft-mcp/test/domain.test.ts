@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { BeginPlanInputSchema } from '../src/domain.js';
 
 describe('Minecraft plan input', () => {
-  it('allows extended duration only for an immutable imported blueprint binding', () => {
+  it('keeps imported and ordinary plans within the same 15-minute authorization window', () => {
     const ordinary = {
       summary: 'Build for too long',
       steps: ['Build'],
@@ -21,6 +21,6 @@ describe('Minecraft plan input', () => {
           origin: { x: 0, y: 100, z: 0 },
         },
       }).success,
-    ).toBe(true);
+    ).toBe(false);
   });
 });

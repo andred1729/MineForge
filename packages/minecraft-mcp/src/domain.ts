@@ -16,24 +16,14 @@ export const BlueprintPlanBindingSchema = z.object({
   origin: PositionSchema,
 });
 
-export const BeginPlanInputSchema = z
-  .object({
-    summary: z.string().min(1).max(500),
-    steps: z.array(z.string().min(1).max(300)).min(1).max(12),
-    permitted_actions: z.array(ActionSchema).min(1),
-    duration_minutes: z.number().int().min(1).max(120).default(15),
-    radius_blocks: z.number().int().min(1).max(32).default(32),
-    blueprint: BlueprintPlanBindingSchema.optional(),
-  })
-  .superRefine((value, context) => {
-    if (value.duration_minutes > 15 && value.blueprint === undefined) {
-      context.addIssue({
-        code: 'custom',
-        path: ['duration_minutes'],
-        message: 'Plans longer than 15 minutes must bind an imported blueprint.',
-      });
-    }
-  });
+export const BeginPlanInputSchema = z.object({
+  summary: z.string().min(1).max(500),
+  steps: z.array(z.string().min(1).max(300)).min(1).max(12),
+  permitted_actions: z.array(ActionSchema).min(1),
+  duration_minutes: z.number().int().min(1).max(15).default(15),
+  radius_blocks: z.number().int().min(1).max(32).default(32),
+  blueprint: BlueprintPlanBindingSchema.optional(),
+});
 export type BeginPlanInput = z.infer<typeof BeginPlanInputSchema>;
 
 export const BlueprintBlockSchema = z.object({

@@ -34,6 +34,66 @@ function abortError(): Error {
   return new Error('Minecraft action was cancelled.');
 }
 
+function vectorMagnitude(vector: Vec3): number {
+  return Math.sqrt(vector.x * vector.x + vector.y * vector.y + vector.z * vector.z);
+}
+
+async function abortablePause(signal: AbortSignal, milliseconds: number): Promise<void> {
+  if (signal.aborted) {
+    throw abortError();
+  }
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      signal.removeEventListener('abort', handleAbort);
+      resolve();
+    }, milliseconds);
+    const handleAbort = () => {
+      clearTimeout(timeout);
+      signal.removeEventListener('abort', handleAbort);
+      reject(abortError());
+    };
+    signal.addEventListener('abort', handleAbort, { once: true });
+    if (signal.aborted) {
+      handleAbort();
+    }
+  });
+}
+
+export async function runCreativeFlight({
+  bot,
+  destination,
+  signal,
+  assertAuthorized,
+}: {
+  bot: Bot;
+  destination: Vec3;
+  signal: AbortSignal;
+  assertAuthorized: () => void;
+}): Promise<void> {
+  bot.creative.startFlying();
+  try {
+    let vector = destination.minus(bot.entity.position);
+    let magnitude = vectorMagnitude(vector);
+    while (magnitude > 0.5) {
+      if (signal.aborted) {
+        throw abortError();
+      }
+      assertAuthorized();
+      bot.physics.gravity = 0;
+      bot.entity.velocity = new Vec3(0, 0, 0);
+      bot.entity.position.add(vector.scaled(0.5 / magnitude));
+      await abortablePause(signal, 50);
+      vector = destination.minus(bot.entity.position);
+      magnitude = vectorMagnitude(vector);
+    }
+    assertAuthorized();
+    bot.entity.position = destination;
+    await abortablePause(signal, 50);
+  } finally {
+    bot.creative.stopFlying();
+  }
+}
+
 async function waitForBlockName({
   bot,
   target,
@@ -103,6 +163,7 @@ export async function runAbortable<T>({
 
 export class MineflayerBot implements MinecraftBotPort {
   private bot: Bot | null = null;
+  private creativeFlightActive = false;
   private readonly chatListeners = new Set<(event: { username: string; message: string }) => void>();
 
   constructor(private readonly options: MineflayerBotOptions) {}
@@ -566,7 +627,10 @@ export class MineflayerBot implements MinecraftBotPort {
       return;
     }
     bot.pathfinder.stop();
-    bot.creative.stopFlying();
+    if (this.creativeFlightActive) {
+      bot.creative.stopFlying();
+      this.creativeFlightActive = false;
+    }
     bot.stopDigging();
     bot.clearControlStates();
   }
@@ -600,16 +664,12 @@ export class MineflayerBot implements MinecraftBotPort {
       if (!isPositionWithinPlanBounds({ plan, position: integerPosition(waypoint) })) {
         throw new Error('Creative build flight would leave the approved plan radius.');
       }
-      await runAbortable({
-        signal,
-        operation: async () => {
-          await bot.creative.flyTo(waypoint);
-        },
-        stop: () => {
-          bot.creative.stopFlying();
-          bot.clearControlStates();
-        },
-      });
+      this.creativeFlightActive = true;
+      try {
+        await runCreativeFlight({ bot, destination: waypoint, signal, assertAuthorized });
+      } finally {
+        this.creativeFlightActive = false;
+      }
     }
   }
 
