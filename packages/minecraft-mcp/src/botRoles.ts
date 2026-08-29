@@ -30,11 +30,12 @@ export function demoWorksites(): Position[] {
   return [{ ...LUMBERJACK_DEMO_WORKSITE }];
 }
 
-export function createBotIdentity(ordinal: number): BotIdentity {
-  const role = BOT_ROLES[ordinal - 1];
-  if (role === undefined) {
+export function createBotIdentity(ordinal: number, requestedRole?: BotRole): BotIdentity {
+  const defaultRole = BOT_ROLES[ordinal - 1];
+  if (defaultRole === undefined) {
     throw new Error('The Minecraft workforce is limited to five bots.');
   }
+  const role = requestedRole ?? defaultRole;
   const username = `ForgeBot${String(ordinal)}`;
   const slug = `forgebot${String(ordinal)}`;
   return BotIdentitySchema.parse({

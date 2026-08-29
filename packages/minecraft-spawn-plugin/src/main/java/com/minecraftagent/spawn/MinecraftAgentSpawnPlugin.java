@@ -72,8 +72,14 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
       sender.sendMessage("Only an in-game player can choose a ForgeBot spawn location.");
       return true;
     }
-    if (arguments.length != 0) {
-      requester.sendMessage("Usage: /spawn");
+    if (arguments.length > 1) {
+      requester.sendMessage("Usage: /spawn <role>");
+      return true;
+    }
+    Optional<BotRole> requestedRole =
+        arguments.length == 0 ? Optional.empty() : BotRole.parseCommand(arguments[0]);
+    if (arguments.length == 1 && requestedRole.isEmpty()) {
+      requester.sendMessage("Unknown ForgeBot role.");
       return true;
     }
     if (requester.getWorld().getEnvironment() != World.Environment.NORMAL) {
@@ -88,6 +94,7 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
     Location requestedLocation = requester.getLocation().clone();
     SpawnControlRequest request =
         new SpawnControlRequest(
+            requestedRole,
             requester.getUniqueId(),
             requester.getName(),
             requester.getWorld().getUID(),
@@ -108,12 +115,14 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
                     .runTask(
                         this,
                         () ->
-                            finishSpawn(requester.getUniqueId(), requestedLocation, response, failure)));
+                            finishSpawn(
+                                requester.getUniqueId(), requestedRole, requestedLocation, response, failure)));
     return true;
   }
 
   private void finishSpawn(
       UUID requesterUuid,
+      Optional<BotRole> requestedRole,
       Location requestedLocation,
       HttpResponse<String> response,
       Throwable failure) {
@@ -148,6 +157,10 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
       return;
     }
     BotIdentity identity = parsed.get();
+    if (requestedRole.isPresent() && identity.role() != requestedRole.get()) {
+      rollback(identity, requester, "did not match the requested role");
+      return;
+    }
     Player bot = Bukkit.getPlayerExact(identity.username());
     if (bot == null) {
       rollback(identity, requester, "did not join Minecraft");

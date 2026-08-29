@@ -1,20 +1,30 @@
 package com.minecraftagent.spawn;
 
 import java.util.Arrays;
+import java.util.Locale;
+import java.util.Optional;
 
 enum BotRole {
-  LUMBERJACK("Lumberjack", 1),
-  MINER("Miner", 2),
-  BUILDER("Builder", 3),
-  HUNTER("Hunter", 4),
-  SCOUT("Scout", 5);
+  LUMBERJACK("lumberjack", "lumber-jack", "Lumberjack", 1),
+  MINER("miner", "miner", "Miner", 2),
+  BUILDER("builder", "builder", "Builder", 3),
+  HUNTER("hunter", "hunter", "Hunter", 4),
+  SCOUT("scout", "scout", "Scout", 5);
 
+  private final String wireName;
+  private final String commandName;
   private final String displayName;
   private final int slot;
 
-  BotRole(String displayName, int slot) {
+  BotRole(String wireName, String commandName, String displayName, int slot) {
+    this.wireName = wireName;
+    this.commandName = commandName;
     this.displayName = displayName;
     this.slot = slot;
+  }
+
+  String wireName() {
+    return wireName;
   }
 
   String displayName() {
@@ -23,6 +33,19 @@ enum BotRole {
 
   int slot() {
     return slot;
+  }
+
+  static Optional<BotRole> parseCommand(String value) {
+    String normalized = value.toLowerCase(Locale.ROOT);
+    if (normalized.equals("lumberjack")) {
+      normalized = "lumber-jack";
+    }
+    final String candidate = normalized;
+    return Arrays.stream(values()).filter(role -> role.commandName.equals(candidate)).findFirst();
+  }
+
+  static Optional<BotRole> parseWireName(String value) {
+    return Arrays.stream(values()).filter(role -> role.wireName.equals(value)).findFirst();
   }
 
   static BotRole forSlot(int slot) {

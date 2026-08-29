@@ -4,6 +4,7 @@ import { startSpawnServer } from '../src/spawnServer.js';
 import { WorkforceCapacityError } from '../src/workforceManager.js';
 
 const FORM = new URLSearchParams({
+  role: 'lumberjack',
   requester_name: 'DemoPlayer',
   requester_uuid: '123e4567-e89b-12d3-a456-426614174000',
   world_name: 'world',
@@ -17,7 +18,7 @@ const FORM = new URLSearchParams({
 
 describe('Minecraft spawn ingress', () => {
   it('requires the shared token and accepts the Paper plugin form contract', async () => {
-    const requests: string[] = [];
+    const requests: Array<[string, string | undefined]> = [];
     const server = startSpawnServer({
       host: '127.0.0.1',
       port: 0,
@@ -25,7 +26,7 @@ describe('Minecraft spawn ingress', () => {
       rollback: async () => false,
       ready: async () => false,
       spawn: async request => {
-        requests.push(request.requester_name);
+        requests.push([request.requester_name, request.role]);
         return {
           username: 'ForgeBot1',
           role: 'lumberjack',
@@ -47,8 +48,8 @@ describe('Minecraft spawn ingress', () => {
         body: FORM,
       });
       expect(accepted.status).toBe(201);
-      expect(await accepted.text()).toBe('ForgeBot1');
-      expect(requests).toEqual(['DemoPlayer']);
+      expect(await accepted.text()).toBe('ForgeBot1:lumberjack');
+      expect(requests).toEqual([['DemoPlayer', 'lumberjack']]);
     } finally {
       await server.close();
     }

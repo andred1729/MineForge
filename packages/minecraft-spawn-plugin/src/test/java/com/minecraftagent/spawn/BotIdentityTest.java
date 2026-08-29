@@ -7,18 +7,18 @@ import org.junit.jupiter.api.Test;
 
 final class BotIdentityTest {
   @Test
-  void mapsEverySupportedBotToItsDemoRole() {
-    assertEquals(BotRole.LUMBERJACK, BotIdentity.parse("ForgeBot1").orElseThrow().role());
-    assertEquals(BotRole.MINER, BotIdentity.parse("ForgeBot2\n").orElseThrow().role());
-    assertEquals(BotRole.BUILDER, BotIdentity.parse("ForgeBot3").orElseThrow().role());
-    assertEquals(BotRole.HUNTER, BotIdentity.parse("ForgeBot4").orElseThrow().role());
-    assertEquals(BotRole.SCOUT, BotIdentity.parse("ForgeBot5").orElseThrow().role());
+  void parsesTheBackendSelectedRoleIndependentlyFromTheBotSlot() {
+    assertEquals(BotRole.HUNTER, BotIdentity.parse("ForgeBot1:hunter").orElseThrow().role());
+    assertEquals(BotRole.LUMBERJACK, BotIdentity.parse("ForgeBot2:lumberjack\n").orElseThrow().role());
+    assertEquals(BotRole.LUMBERJACK, BotRole.parseCommand("lumber-jack").orElseThrow());
+    assertEquals(BotRole.HUNTER, BotRole.parseCommand("hunter").orElseThrow());
   }
 
   @Test
   void rejectsAnythingOutsideTheFiveBotContract() {
-    assertTrue(BotIdentity.parse("ForgeBot").isEmpty());
-    assertTrue(BotIdentity.parse("ForgeBot6").isEmpty());
+    assertTrue(BotIdentity.parse("ForgeBot1").isEmpty());
+    assertTrue(BotIdentity.parse("ForgeBot6:hunter").isEmpty());
+    assertTrue(BotIdentity.parse("ForgeBot1:unknown").isEmpty());
     assertTrue(BotIdentity.parse("not-a-bot").isEmpty());
   }
 }

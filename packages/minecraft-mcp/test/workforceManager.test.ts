@@ -131,6 +131,32 @@ describe('Minecraft workforce manager', () => {
     await manager.close();
   });
 
+  it('uses a requested role without narrowing the sequential bot identity', async () => {
+    const identities: BotIdentity[] = [];
+    const provisioner: TrueForgeProvisionerPort = {
+      ensureProvider: async () => undefined,
+      provisionBot: async ({ identity }) => ({
+        agentId: `agent-${String(identity.ordinal)}`,
+        sessionId: `session-${String(identity.ordinal)}`,
+      }),
+    };
+    const manager = new WorkforceManager(
+      managerOptions({ stateDirectory: await temporaryDirectory(), provisioner, identities }),
+    );
+    await manager.start();
+
+    await expect(manager.spawn('hunter')).resolves.toMatchObject({ username: 'ForgeBot1', role: 'hunter' });
+    await expect(manager.spawn('lumberjack')).resolves.toMatchObject({
+      username: 'ForgeBot2',
+      role: 'lumberjack',
+    });
+    expect(identities.map(identity => [identity.username, identity.role])).toEqual([
+      ['ForgeBot1', 'hunter'],
+      ['ForgeBot2', 'lumberjack'],
+    ]);
+    await manager.close();
+  });
+
   it('restores the saved bot with the same TrueForge session', async () => {
     const stateDirectory = await temporaryDirectory();
     const firstProvisioner: TrueForgeProvisionerPort = {

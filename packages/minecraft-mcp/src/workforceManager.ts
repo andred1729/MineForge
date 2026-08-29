@@ -1,6 +1,6 @@
 import { MinecraftActionQueue } from './actionQueue.js';
 import type { MinecraftBotPort } from './botPort.js';
-import { createBotIdentity, roleActivationMessage, type BotIdentity } from './botRoles.js';
+import { createBotIdentity, roleActivationMessage, type BotIdentity, type BotRole } from './botRoles.js';
 import { PlanStore } from './planStore.js';
 import type { TrueForgeSessionPort } from './trueforgePort.js';
 import type { TrueForgeProvisionerPort } from './trueforgeProvisioner.js';
@@ -92,8 +92,8 @@ export class WorkforceManager {
     }
   }
 
-  spawn(): Promise<SpawnedBot> {
-    const result = this.spawnSequence.then(async () => await this.spawnNext());
+  spawn(role?: BotRole): Promise<SpawnedBot> {
+    const result = this.spawnSequence.then(async () => await this.spawnNext(role));
     this.spawnSequence = result.then(
       () => undefined,
       () => undefined,
@@ -156,14 +156,14 @@ export class WorkforceManager {
     );
   }
 
-  private async spawnNext(): Promise<SpawnedBot> {
+  private async spawnNext(role?: BotRole): Promise<SpawnedBot> {
     const state = this.requireState();
     if (state.bots.length >= this.options.maxBots || state.nextOrdinal > this.options.maxBots) {
       throw new WorkforceCapacityError(
         `The Minecraft workforce already has its ${String(this.options.maxBots)} bot maximum.`,
       );
     }
-    const identity = createBotIdentity(state.nextOrdinal);
+    const identity = createBotIdentity(state.nextOrdinal, role);
     const active = await this.activate({ identity });
     const nextState: WorkforceState = {
       version: 1,
