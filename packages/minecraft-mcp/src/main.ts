@@ -41,6 +41,7 @@ export async function main(): Promise<void> {
   const actionQueue = new MinecraftActionQueue();
 
   let controller: MinecraftEventController | null = null;
+    const pendingTerminalEvents: Parameters<MinecraftEventController['enqueuePlanTerminal']>[0][] = [];
   const mcpHttpServer = startMinecraftMcpHttpServer({
     host: config.mcpHost,
     port: config.mcpPort,
@@ -51,6 +52,8 @@ export async function main(): Promise<void> {
         actionQueue,
         onPlanTerminal: event => {
           console.log(`Plan ${event.planId} ${event.outcome}: ${event.summary}`);
+            if (controller === null) pendingTerminalEvents.push(event);
+            else controller.enqueuePlanTerminal(event);
         },
       }),
   });
@@ -77,6 +80,7 @@ export async function main(): Promise<void> {
       planStore.invalidate();
     });
     await controller.start();
+      for (const event of pendingTerminalEvents.splice(0)) controller.enqueuePlanTerminal(event);
     console.log(`Minecraft chat is attached to TrueForge session ${state.sessionId}`);
     await shutdownPromise;
   } finally {
