@@ -1,13 +1,10 @@
 import type { MinecraftBotPort } from './botPort.js';
-import type { AgentEvent, MinecraftChatEvent, PlanTerminalEvent } from './domain.js';
+import type { MinecraftChatEvent } from './domain.js';
 import { EventQueue } from './eventQueue.js';
 import type { TrueForgeSessionPort, TurnSnapshot } from './trueforgePort.js';
 
-function eventPrompt(event: AgentEvent): string {
-  if (event.type === 'minecraft_chat') {
-    return `[Minecraft chat from ${event.username}] ${event.message}`;
-  }
-  return `[Minecraft environment event] Plan ${event.planId} ${event.outcome}: ${event.summary}`;
+function eventPrompt(event: MinecraftChatEvent): string {
+  return `[Minecraft chat from ${event.username}] ${event.message}`;
 }
 
 function isBusy(turn: TurnSnapshot | null): boolean {
@@ -69,10 +66,6 @@ export class MinecraftEventController {
       void this.tick();
     }
     return queued;
-  }
-
-  enqueuePlanTerminal(event: PlanTerminalEvent): boolean {
-    return this.queue.enqueue(event);
   }
 
   async tick(): Promise<void> {

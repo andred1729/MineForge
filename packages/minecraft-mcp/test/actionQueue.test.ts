@@ -19,6 +19,7 @@ describe('MinecraftActionQueue', () => {
 
     const first = queue.run({
       signal,
+      onAbort: () => {},
       operation: async () => {
         order.push('first:start');
         await firstGate.promise;
@@ -28,6 +29,7 @@ describe('MinecraftActionQueue', () => {
     });
     const second = queue.run({
       signal,
+      onAbort: () => {},
       operation: async () => {
         order.push('second:start');
         return 'second';
@@ -48,13 +50,14 @@ describe('MinecraftActionQueue', () => {
     const firstGate = deferred();
     const first = queue.run({
       signal: new AbortController().signal,
+      onAbort: () => {},
       operation: async () => {
         await firstGate.promise;
       },
     });
     const cancelled = new AbortController();
     const operation = vi.fn(async () => 'unexpected');
-    const second = queue.run({ signal: cancelled.signal, operation });
+    const second = queue.run({ signal: cancelled.signal, operation, onAbort: () => {} });
 
     cancelled.abort();
     firstGate.resolve();
@@ -62,5 +65,45 @@ describe('MinecraftActionQueue', () => {
 
     await expect(second).rejects.toThrow('cancelled before execution');
     expect(operation).not.toHaveBeenCalled();
+  });
+
+  it('cancels the active action when a queued request is aborted and waits for it to settle', async () => {
+    const queue = new MinecraftActionQueue();
+    const activeStarted = deferred();
+    const activeSettled = deferred();
+    let activeSignal: AbortSignal | undefined;
+    let activeFinished = false;
+
+    const first = queue.run({
+      signal: new AbortController().signal,
+      onAbort: () => {},
+      operation: async signal => {
+        activeSignal = signal;
+        activeStarted.resolve();
+        await activeSettled.promise;
+        activeFinished = true;
+        throw new Error('Underlying operation settled after cancellation.');
+      },
+    });
+    await activeStarted.promise;
+
+    const queuedController = new AbortController();
+    const queuedOperation = vi.fn(async () => 'unexpected');
+    const revokePlan = vi.fn();
+    const second = queue.run({
+      signal: queuedController.signal,
+      operation: queuedOperation,
+      onAbort: revokePlan,
+    });
+
+    queuedController.abort();
+    expect(revokePlan).toHaveBeenCalledOnce();
+    expect(activeSignal?.aborted).toBe(true);
+    expect(activeFinished).toBe(false);
+
+    activeSettled.resolve();
+    await expect(first).rejects.toThrow('settled after cancellation');
+    await expect(second).rejects.toThrow('cancelled before execution');
+    expect(queuedOperation).not.toHaveBeenCalled();
   });
 });

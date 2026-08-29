@@ -49,17 +49,8 @@ export type Plan = z.infer<typeof PlanSchema>;
 export const PlanOutcomeSchema = z.enum(['completed', 'failed']);
 export type PlanOutcome = z.infer<typeof PlanOutcomeSchema>;
 
-export interface PlanTerminalEvent {
-  type: 'plan_terminal';
-  planId: string;
-  outcome: PlanOutcome;
-  summary: string;
-}
-
 export interface MinecraftChatEvent {
   type: 'minecraft_chat';
   username: string;
   message: string;
 }
-
-export type AgentEvent = PlanTerminalEvent | MinecraftChatEvent;
