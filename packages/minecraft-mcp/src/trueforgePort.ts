@@ -13,6 +13,22 @@ export interface TrueForgeSessionPort {
   cancelActiveTurn(): Promise<void>;
 }
 
+interface PageLike<T> {
+  data: T[];
+  hasNextPage(): boolean;
+  getNextPage(): Promise<PageLike<T>>;
+}
+
+export async function lastItemAcrossPages<T>(firstPage: PageLike<T>): Promise<T | null> {
+  let page = firstPage;
+  let last = page.data.at(-1) ?? null;
+  while (page.hasNextPage()) {
+    page = await page.getNextPage();
+    last = page.data.at(-1) ?? last;
+  }
+  return last;
+}
+
 function contentText(content: TrueForgeApi.ModelMessageEventContent | null | undefined): string | null {
   if (typeof content === 'string') {
     return content.trim().length === 0 ? null : content.trim();
@@ -49,9 +65,9 @@ export class TrueForgeSessionClient implements TrueForgeSessionPort {
   private readonly sessionId: string;
 
   async latestTurn(): Promise<TurnSnapshot | null> {
-    const page = await this.client.sessions.listTurns(this.sessionId, { limit: 1 });
-    const turn = page.data[0];
-    return turn === undefined ? null : toSnapshot(turn);
+    const page = await this.client.sessions.listTurns(this.sessionId, { limit: 25 });
+    const turn = await lastItemAcrossPages(page);
+    return turn === null ? null : toSnapshot(turn);
   }
 
   async createUserTurn(message: string): Promise<TurnSnapshot> {
