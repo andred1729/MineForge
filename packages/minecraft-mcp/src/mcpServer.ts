@@ -31,6 +31,7 @@ function jsonToolResult(value: unknown) {
 }
 
 function toolError(caught: unknown) {
+  console.error('Minecraft MCP tool failed', caught);
   const message = caught instanceof Error ? caught.message : 'Unknown Minecraft tool error.';
   return {
     isError: true,
@@ -330,6 +331,7 @@ export function createMinecraftMcpServer({
     },
     async ({ reason }) =>
       await executeTool(async () => {
+        actionQueue.cancelActive();
         bot.stop();
         planStore.invalidate();
         await bot.say(reason);

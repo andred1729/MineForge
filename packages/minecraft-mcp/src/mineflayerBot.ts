@@ -8,6 +8,7 @@ import { Vec3 } from 'vec3';
 import type { ActionProgress, MinecraftBotPort, NearbyBlock, NearbyEntity, WorldObservation } from './botPort.js';
 import { splitChatMessage } from './chat.js';
 import type { BlueprintBlock, Plan, Position } from './domain.js';
+import { calculateNewItemCount, waitForItemCountAtLeast } from './inventory.js';
 import { isPositionWithinPlanBounds } from './planStore.js';
 
 interface MineflayerBotOptions {
@@ -111,7 +112,13 @@ export class MineflayerBot implements MinecraftBotPort {
           throw new Error('Mineflayer failed before spawning.');
         }),
       ]);
-      bot.pathfinder.setMovements(new Movements(bot));
+      const movements = new Movements(bot);
+      // Pathfinding is navigation only. World mutation must happen through the
+      // explicitly authorized gather/build loops so it can be counted and stopped.
+      movements.canDig = false;
+      movements.allow1by1towers = false;
+      movements.scafoldingBlocks = [];
+      bot.pathfinder.setMovements(movements);
     } catch (caught) {
       this.bot = null;
       bot.end('Connection failed');
@@ -203,39 +210,12 @@ export class MineflayerBot implements MinecraftBotPort {
     assertAuthorized: () => void;
   }): Promise<void> {
     const bot = this.requireBot();
-    await runAbortable({
+    await this.runBoundedPathfinder({
+      plan,
       signal,
-      operation: async () => {
-        assertAuthorized();
-        let rejectBoundary: ((reason: Error) => void) | undefined;
-        const boundaryViolation = new Promise<never>((_resolve, reject) => {
-          rejectBoundary = reject;
-        });
-        const checkBounds = () => {
-          try {
-            assertAuthorized();
-            if (isPositionWithinPlanBounds({ plan, position: integerPosition(bot.entity.position) })) {
-              return;
-            }
-            bot.pathfinder.stop();
-            rejectBoundary?.(new Error(`Path left the approved ${String(plan.radiusBlocks)}-block plan radius.`));
-          } catch (caught) {
-            bot.pathfinder.stop();
-            rejectBoundary?.(caught instanceof Error ? caught : new Error('Minecraft plan authorization failed.'));
-          }
-        };
-        bot.on('physicsTick', checkBounds);
-        try {
-          await Promise.race([
-            bot.pathfinder.goto(new goals.GoalNear(target.x, target.y, target.z, range)),
-            boundaryViolation,
-          ]);
-        } finally {
-          bot.removeListener('physicsTick', checkBounds);
-        }
-      },
-      stop: () => {
-        bot.pathfinder.stop();
+      assertAuthorized,
+      navigate: async () => {
+        await bot.pathfinder.goto(new goals.GoalNear(target.x, target.y, target.z, range));
       },
     });
   }
@@ -260,7 +240,12 @@ export class MineflayerBot implements MinecraftBotPort {
     if (blockType === undefined) {
       throw new Error(`Unknown Minecraft block: ${blockName}`);
     }
+    const itemType = bot.registry.itemsByName[blockName];
+    if (itemType === undefined) {
+      throw new Error(`${blockName} does not drop a same-named inventory item supported by gather_blocks.`);
+    }
 
+    const startingItemCount = bot.inventory.count(itemType.id, null);
     let completed = 0;
     const details: string[] = [];
     while (completed < count) {
@@ -269,14 +254,21 @@ export class MineflayerBot implements MinecraftBotPort {
       }
       assertAuthorized();
       const block = bot.findBlock({
-        matching: candidate =>
-          candidate.type === blockType.id &&
-          isPositionWithinPlanBounds({ plan, position: integerPosition(candidate.position) }),
+        matching: blockType.id,
+        useExtraInfo: candidate => {
+          try {
+            return isPositionWithinPlanBounds({ plan, position: integerPosition(candidate.position) });
+          } catch {
+            // Treat an unloaded runtime block as outside the approved plan.
+            return false;
+          }
+        },
         maxDistance,
       });
       if (block === null) {
         break;
       }
+      const itemCountBeforeDig = bot.inventory.count(itemType.id, null);
       await this.moveTo({ target: integerPosition(block.position), range: 2, plan, signal, assertAuthorized });
       const tool = bot.pathfinder.bestHarvestTool(block);
       if (tool !== null) {
@@ -301,8 +293,57 @@ export class MineflayerBot implements MinecraftBotPort {
           bot.stopDigging();
         },
       });
-      completed += 1;
-      details.push(`Mined ${blockName} at ${block.position.toString()}`);
+      await new Promise(resolve => setTimeout(resolve, 150));
+      if (bot.inventory.count(itemType.id, null) <= itemCountBeforeDig) {
+        const droppedItem = bot.nearestEntity(
+          entity =>
+            entity.name === 'item' &&
+            entity.position.distanceTo(block.position) <= 4 &&
+            isPositionWithinPlanBounds({ plan, position: integerPosition(entity.position) }),
+        );
+        if (droppedItem !== null) {
+          try {
+            await this.runBoundedPathfinder({
+              plan,
+              signal,
+              assertAuthorized,
+              navigate: async () => {
+                await bot.pathfinder.goto(new goals.GoalFollow(droppedItem, 0));
+              },
+            });
+          } catch (caught) {
+            if (bot.inventory.count(itemType.id, null) <= itemCountBeforeDig) {
+              throw caught;
+            }
+          }
+        } else {
+          await this.moveTo({
+            target: integerPosition(block.position),
+            range: 1,
+            plan,
+            signal,
+            assertAuthorized,
+          });
+        }
+      }
+      const currentItemCount = await waitForItemCountAtLeast({
+        readItemCount: () => bot.inventory.count(itemType.id, null),
+        expectedItemCount: itemCountBeforeDig + 1,
+        signal,
+      });
+      const nextCompleted = calculateNewItemCount({
+        currentItemCount,
+        expectedCount: count,
+        startingItemCount,
+      });
+      details.push(
+        `Mined ${blockName} at ${block.position.toString()}; collected ${String(nextCompleted)} of ${String(count)}`,
+      );
+      if (nextCompleted <= completed) {
+        details.push('No matching inventory pickup was observed; stopping to avoid mining extra blocks.');
+        break;
+      }
+      completed = nextCompleted;
     }
     return { requested: count, completed, details };
   }
@@ -332,11 +373,13 @@ export class MineflayerBot implements MinecraftBotPort {
       throw new Error(`No currently craftable recipe found for ${String(count)} ${itemName}.`);
     }
     const recipeCount = Math.ceil(count / recipe.result.count);
+    const expectedOutputCount = recipeCount * recipe.result.count;
 
     if (bot.recipesFor(itemType.id, null, recipeCount, craftingTable).length === 0) {
       throw new Error(`Not enough ingredients to craft ${String(count)} ${itemName}.`);
     }
 
+    const startingItemCount = bot.inventory.count(itemType.id, null);
     assertAuthorized();
     await runAbortable({
       signal,
@@ -347,8 +390,22 @@ export class MineflayerBot implements MinecraftBotPort {
         bot.clearControlStates();
       },
     });
-    const completed = recipeCount * recipe.result.count;
-    return { requested: count, completed, details: [`Crafted ${String(completed)} ${itemName}`] };
+    const expectedItemCount = startingItemCount + expectedOutputCount;
+    const currentItemCount = await waitForItemCountAtLeast({
+      readItemCount: () => bot.inventory.count(itemType.id, null),
+      expectedItemCount,
+      signal,
+    });
+    if (currentItemCount < expectedItemCount) {
+      throw new Error(
+        `Craft completed but inventory did not report the expected ${String(expectedOutputCount)} ${itemName} within 5 seconds.`,
+      );
+    }
+    return {
+      requested: count,
+      completed: expectedOutputCount,
+      details: [`Crafted ${String(expectedOutputCount)} ${itemName}`],
+    };
   }
 
   async executeBlueprint({
@@ -512,6 +569,52 @@ export class MineflayerBot implements MinecraftBotPort {
       }
     }
     return null;
+  }
+
+  private async runBoundedPathfinder({
+    plan,
+    signal,
+    navigate,
+    assertAuthorized,
+  }: {
+    plan: Plan;
+    signal: AbortSignal;
+    navigate: () => Promise<void>;
+    assertAuthorized: () => void;
+  }): Promise<void> {
+    const bot = this.requireBot();
+    await runAbortable({
+      signal,
+      operation: async () => {
+        assertAuthorized();
+        let rejectBoundary: ((reason: Error) => void) | undefined;
+        const boundaryViolation = new Promise<never>((_resolve, reject) => {
+          rejectBoundary = reject;
+        });
+        const checkBounds = () => {
+          try {
+            assertAuthorized();
+            if (isPositionWithinPlanBounds({ plan, position: integerPosition(bot.entity.position) })) {
+              return;
+            }
+            bot.pathfinder.stop();
+            rejectBoundary?.(new Error(`Path left the approved ${String(plan.radiusBlocks)}-block plan radius.`));
+          } catch (caught) {
+            bot.pathfinder.stop();
+            rejectBoundary?.(caught instanceof Error ? caught : new Error('Minecraft plan authorization failed.'));
+          }
+        };
+        bot.on('physicsTick', checkBounds);
+        try {
+          await Promise.race([navigate(), boundaryViolation]);
+        } finally {
+          bot.removeListener('physicsTick', checkBounds);
+        }
+      },
+      stop: () => {
+        bot.pathfinder.stop();
+      },
+    });
   }
 
   private requireBot(): Bot {

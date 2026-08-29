@@ -71,6 +71,7 @@ export async function main(): Promise<void> {
       sessionId: state.sessionId,
     });
     controller = new MinecraftEventController(bot, trueforge, 1_000, () => {
+      actionQueue.cancelActive();
       planStore.invalidate();
     });
     await controller.start();
@@ -81,6 +82,7 @@ export async function main(): Promise<void> {
     process.removeListener('SIGTERM', shutdown);
     await controller?.close();
     await mcpHttpServer.close();
+    actionQueue.cancelActive();
     planStore.invalidate();
     bot.stop();
     await bot.close();
