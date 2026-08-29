@@ -18,6 +18,15 @@ build_server_image() {
     "$workspace_directory"
 }
 
+prepare_skins_volume() {
+  docker volume create "$skins_volume_name" >/dev/null
+  docker run --rm \
+    --entrypoint /bin/sh \
+    -v "$skins_volume_name:/skins" \
+    "$server_image" \
+    -c 'chown -R 1000:1000 /skins'
+}
+
 container_exists() {
   docker container inspect "$container_name" >/dev/null 2>&1
 }
@@ -29,6 +38,7 @@ container_has_environment() {
 
 start_server() {
   build_server_image
+  prepare_skins_volume
   if container_exists; then
     container_image_id="$(docker container inspect --format '{{.Image}}' "$container_name")"
     desired_image_id="$(docker image inspect --format '{{.Id}}' "$server_image")"
