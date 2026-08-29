@@ -1,0 +1,42 @@
+{
+  "name": "@minecraft-agent/minecraft-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "scripts": {
+    "build": "tsup",
+    "bootstrap": "tsx src/bootstrap.ts",
+    "dev": "tsx watch src/main.ts",
+    "fixture": "tsx src/fixture.ts",
+    "prebootstrap": "pnpm run sdk:build",
+    "prebuild": "pnpm run sdk:build",
+    "predev": "pnpm run sdk:build",
+    "pretest": "pnpm run sdk:build",
+    "pretypecheck": "pnpm run sdk:build",
+    "sdk:build": "pnpm --filter @truefoundry/trueforge-sdk build",
+    "start": "node dist/main.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@truefoundry/trueforge-sdk": "workspace:*",
+    "canvas": "3.2.3",
+    "mineflayer": "4.38.0",
+    "mineflayer-pathfinder": "2.4.5",
+    "prismarine-viewer": "1.33.0",
+    "vec3": "0.1.10",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "tsup": "^8.5.1",
+    "tsx": "^4.23.12",
+    "typescript": "~5.9.3",
+    "vitest": "^4.1.9"
+  }
+}

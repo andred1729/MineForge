@@ -66,6 +66,13 @@ jobs:
               - 'pnpm-workspace.yaml'
               - 'tsconfig.base.json'
               - '.github/workflows/ci.yml'
+            minecraft-mcp:
+              - 'packages/minecraft-mcp/**'
+              - 'scripts/minecraft-*.sh'
+              - 'package.json'
+              - 'pnpm-workspace.yaml'
+              - 'tsconfig.base.json'
+              - '.github/workflows/ci.yml'
             store:
               - 'packages/trueforge/src/db/**'
               - 'packages/trueforge/tests/db/**'
@@ -96,6 +103,7 @@ jobs:
           TRUEFORGE: ${{ steps.filter.outputs.trueforge }}
           FRONTEND: ${{ steps.filter.outputs.frontend }}
           TRUEFORGE_UI: ${{ steps.filter.outputs['trueforge-ui'] }}
+          MINECRAFT_MCP: ${{ steps.filter.outputs['minecraft-mcp'] }}
         run: |
           node <<'EOF' >> "$GITHUB_OUTPUT"
           const changedPackages = [];
@@ -103,6 +111,7 @@ jobs:
           if (process.env.TRUEFORGE === 'true') changedPackages.push('trueforge');
           if (process.env.FRONTEND === 'true') changedPackages.push('frontend');
           if (process.env.TRUEFORGE_UI === 'true') changedPackages.push('trueforge-ui');
+          if (process.env.MINECRAFT_MCP === 'true') changedPackages.push('minecraft-mcp');
           console.log(`list=${JSON.stringify(changedPackages)}`);
           EOF
 
