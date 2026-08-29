@@ -1,6 +1,6 @@
 # Minecraft `/spawn` Paper plugin
 
-This server-only Paper plugin turns `/spawn` into a request for the local Minecraft bot manager. Internal roles are deliberately not part of the player-facing command. No client mod is required.
+This server-only Paper plugin turns `/spawn` or `/spawn <role>` into a request for the local Minecraft bot manager. The role argument is accepted without advertising a category list in command help or chat. No client mod is required.
 
 ## Spawn control contract
 
@@ -15,6 +15,7 @@ The body uses `application/x-www-form-urlencoded` and contains:
 ```text
 requester_uuid
 requester_name
+role (optional)
 world_uuid
 world_name
 x
@@ -24,9 +25,9 @@ yaw
 pitch
 ```
 
-The host bot manager is authoritative for sequential identity and internal role allocation. It creates that bot's TrueForge connector, agent, and session, waits for the bot to join, and then returns:
+The host bot manager is authoritative for sequential identity and validates the optional requested role. It creates that bot's TrueForge connector, agent, and session, waits for the bot to join, and then returns:
 
-- `201 text/plain` with exactly `ForgeBotN` on success.
+- `201 text/plain` with exactly `ForgeBotN:role` on success.
 - `409` when five bots are already active.
 - Another non-2xx status when creation fails; it must release any reservation and disconnect partial bot state.
 
