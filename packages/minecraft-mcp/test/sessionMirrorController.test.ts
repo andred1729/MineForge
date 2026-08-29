@@ -38,7 +38,7 @@ function fakeBot() {
     drop: vi.fn(async ({ count }: { count: number }) => ({ requested: count, completed: count, details: [] })),
     stop: vi.fn(),
     say: vi.fn(async () => undefined),
-    onChat: () => () => undefined,
+    onChat: (_listener: (event: { username: string; message: string }) => void) => () => undefined,
   };
 }
 
@@ -75,6 +75,49 @@ describe('TrueForge session mirror', () => {
 
     expect(bot.say).toHaveBeenCalledTimes(1);
     expect(bot.say).toHaveBeenCalledWith('I finished harvesting the tree.');
+    await controller.close();
+  });
+
+  it('serializes player chat into the Builder session while approval is not pending', async () => {
+    const bot = fakeBot();
+    let chatListener: ((event: { username: string; message: string }) => void) | undefined;
+    bot.onChat = listener => {
+      chatListener = listener;
+      return () => undefined;
+    };
+    let latest: TurnSnapshot = {
+      id: 'approved-idle-turn',
+      status: 'done',
+      hasRequiredActions: false,
+      responseText: null,
+    };
+    const createUserTurn = vi.fn(async () => ({
+      id: 'minecraft-turn',
+      status: 'running' as const,
+      hasRequiredActions: false,
+      responseText: null,
+    }));
+    const session: TrueForgeSessionPort = {
+      latestTurn: async () => latest,
+      createUserTurn,
+      cancelActiveTurn: async () => undefined,
+    };
+    const controller = new SessionMirrorController(bot, session, vi.fn(), 60_000, true);
+    await controller.start();
+
+    latest = { ...latest, id: 'approval', hasRequiredActions: true };
+    chatListener?.({
+      username: 'DemoPlayer',
+      message: 'https://www.grabcraft.com/minecraft/small-modern-villa/modern-houses',
+    });
+    await controller.tick();
+    expect(createUserTurn).not.toHaveBeenCalled();
+
+    latest = { ...latest, id: 'idle-again', hasRequiredActions: false };
+    await controller.tick();
+    expect(createUserTurn).toHaveBeenCalledWith(
+      'DemoPlayer says in Minecraft: https://www.grabcraft.com/minecraft/small-modern-villa/modern-houses',
+    );
     await controller.close();
   });
 

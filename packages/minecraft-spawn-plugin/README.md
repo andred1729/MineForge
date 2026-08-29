@@ -1,6 +1,6 @@
 # Minecraft `/spawn` Paper plugin
 
-This server-only Paper plugin turns the literal `/spawn` command into a request for the local Minecraft bot manager. No client mod is required.
+This server-only Paper plugin turns `/spawn <role>`—notably `/spawn builder`—into a request for the local Minecraft bot manager. No client mod is required.
 
 ## Spawn control contract
 
@@ -22,6 +22,7 @@ y
 z
 yaw
 pitch
+requested_role
 ```
 
 The host bot manager is authoritative for capacity and identity allocation. It must reserve the lowest available name from `ForgeBot1` through `ForgeBot5`, create that bot's TrueForge connector, agent, and session, wait for the bot to join, and then return:

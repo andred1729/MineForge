@@ -10,17 +10,32 @@ export class SessionMirrorController {
   private polling = false;
   private mirroredTurnId: string | null = null;
   private handledTerminalTurnId: string | null = null;
+  private readonly pendingMinecraftMessages: string[] = [];
+  private removeChatListener: (() => void) | null = null;
 
   constructor(
     private readonly bot: MinecraftBotPort,
     private readonly trueforge: TrueForgeSessionPort,
     private readonly onTurnCancelled: () => void,
     private readonly pollIntervalMs = 1_000,
+    private readonly acceptMinecraftChat = false,
   ) {}
 
   async start(): Promise<void> {
     const initialTurn = await this.trueforge.latestTurn();
     this.mirroredTurnId = initialTurn?.status === 'running' ? null : (initialTurn?.id ?? null);
+    if (this.acceptMinecraftChat) {
+      const ownUsername = this.bot.inspect({ radius: 1 }).username;
+      this.removeChatListener = this.bot.onChat(({ username, message }) => {
+        if (username === ownUsername || /^ForgeBot\d+$/.test(username) || /^sub_agent\d+$/.test(username)) {
+          return;
+        }
+        if (this.pendingMinecraftMessages.length >= 50) {
+          this.pendingMinecraftMessages.shift();
+        }
+        this.pendingMinecraftMessages.push(`${username} says in Minecraft: ${message}`);
+      });
+    }
     this.pollingHandle = setInterval(() => void this.tick(), this.pollIntervalMs);
   }
 
@@ -29,6 +44,8 @@ export class SessionMirrorController {
       clearInterval(this.pollingHandle);
       this.pollingHandle = null;
     }
+    this.removeChatListener?.();
+    this.removeChatListener = null;
     return Promise.resolve();
   }
 
@@ -40,6 +57,11 @@ export class SessionMirrorController {
     try {
       const latest = await this.trueforge.latestTurn();
       if (latest === null) {
+        const pendingMessage = this.pendingMinecraftMessages[0];
+        if (pendingMessage !== undefined) {
+          await this.trueforge.createUserTurn(pendingMessage);
+          this.pendingMinecraftMessages.shift();
+        }
         return;
       }
       if (isTerminalFailure(latest) && this.handledTerminalTurnId !== latest.id) {
@@ -55,6 +77,14 @@ export class SessionMirrorController {
       ) {
         await this.bot.say(latest.responseText);
         this.mirroredTurnId = latest.id;
+      }
+      const canStartExternalTurn =
+        !latest.hasRequiredActions &&
+        (latest.status === 'done' || latest.status === 'cancelled' || latest.status === 'error');
+      const pendingMessage = this.pendingMinecraftMessages[0];
+      if (canStartExternalTurn && pendingMessage !== undefined) {
+        await this.trueforge.createUserTurn(pendingMessage);
+        this.pendingMinecraftMessages.shift();
       }
     } catch (caught) {
       console.warn('Minecraft session mirror tick failed', caught);

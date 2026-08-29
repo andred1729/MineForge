@@ -19,7 +19,8 @@ record SpawnControlRequest(
     double y,
     double z,
     float yaw,
-    float pitch) {
+    float pitch,
+    String requestedRole) {
 
   HttpRequest toHttpRequest(URI endpoint, String token) {
     return HttpRequest.newBuilder(endpoint)
@@ -42,6 +43,7 @@ record SpawnControlRequest(
     values.put("z", Double.toString(z));
     values.put("yaw", Float.toString(yaw));
     values.put("pitch", Float.toString(pitch));
+    values.put("requested_role", requestedRole);
 
     StringJoiner encoded = new StringJoiner("&");
     values.forEach(

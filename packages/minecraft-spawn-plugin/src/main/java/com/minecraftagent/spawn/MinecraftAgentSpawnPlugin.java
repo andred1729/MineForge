@@ -73,8 +73,13 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
       sender.sendMessage("Only an in-game player can choose a ForgeBot spawn location.");
       return true;
     }
-    if (arguments.length != 0) {
-      requester.sendMessage("Usage: /spawn");
+    if (arguments.length != 1) {
+      requester.sendMessage("Usage: /spawn builder");
+      return true;
+    }
+    String requestedRole = arguments[0].toLowerCase(Locale.ROOT);
+    if (!Set.of("lumberjack", "miner", "builder", "hunter", "scout").contains(requestedRole)) {
+      requester.sendMessage("Unknown worker role. For this demo, use /spawn builder.");
       return true;
     }
     if (requester.getWorld().getEnvironment() != World.Environment.NORMAL) {
@@ -97,9 +102,10 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
             requestedLocation.getY(),
             requestedLocation.getZ(),
             requestedLocation.getYaw(),
-            requestedLocation.getPitch());
+            requestedLocation.getPitch(),
+            requestedRole);
 
-    requester.sendMessage("Requesting the next ForgeBot from TrueForge...");
+    requester.sendMessage("Requesting a " + requestedRole + " from TrueForge...");
     httpClient
         .sendAsync(
             request.toHttpRequest(spawnEndpoint, spawnToken),
@@ -109,13 +115,20 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
                 Bukkit.getScheduler()
                     .runTask(
                         this,
-                        () -> finishSpawn(requester.getUniqueId(), requestedLocation, response, failure)));
+                        () ->
+                            finishSpawn(
+                                requester.getUniqueId(),
+                                requestedLocation,
+                                requestedRole,
+                                response,
+                                failure)));
     return true;
   }
 
   private void finishSpawn(
       UUID requesterUuid,
       Location requestedLocation,
+      String requestedRole,
       HttpResponse<String> response,
       Throwable failure) {
     Player requester = Bukkit.getPlayer(requesterUuid);
@@ -171,14 +184,14 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
       return;
     }
     bot.setFallDistance(0);
-    giveStartingKit(bot, identity.slot());
+    giveStartingKit(bot, requestedRole);
     applyClassicSkin(identity.username());
     spawnInFlight.set(false);
     tell(
         requester,
         identity.username()
             + " spawned nearby as the "
-            + identity.role()
+            + requestedRole
             + ". Open its TrueForge session to assign work.");
   }
 
@@ -254,40 +267,34 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
     return false;
   }
 
-  private void giveStartingKit(Player bot, int slot) {
+  private void giveStartingKit(Player bot, String role) {
     bot.getInventory().clear();
-    switch (slot) {
-      case 1 -> {
+    switch (role) {
+      case "lumberjack" -> {
         add(bot, Material.STONE_AXE, 1);
         add(bot, Material.OAK_SAPLING, 8);
         add(bot, Material.BAKED_POTATO, 16);
       }
-      case 2 -> {
+      case "miner" -> {
         add(bot, Material.IRON_PICKAXE, 1);
         add(bot, Material.TORCH, 64);
         add(bot, Material.LADDER, 32);
         add(bot, Material.BAKED_POTATO, 16);
       }
-      case 3 -> {
-        add(bot, Material.IRON_AXE, 1);
-        add(bot, Material.IRON_PICKAXE, 1);
-        add(bot, Material.OAK_PLANKS, 256);
-        add(bot, Material.COBBLESTONE, 128);
-        add(bot, Material.GLASS_PANE, 64);
-        add(bot, Material.OAK_DOOR, 1);
-        add(bot, Material.TORCH, 32);
+      case "builder" -> {
+        add(bot, Material.BAKED_POTATO, 16);
       }
-      case 4 -> {
+      case "hunter" -> {
         add(bot, Material.IRON_SWORD, 1);
         add(bot, Material.SHIELD, 1);
         add(bot, Material.BAKED_POTATO, 16);
       }
-      case 5 -> {
+      case "scout" -> {
         add(bot, Material.COMPASS, 1);
         add(bot, Material.SPYGLASS, 1);
         add(bot, Material.BAKED_POTATO, 16);
       }
-      default -> throw new IllegalArgumentException("Unsupported ForgeBot slot: " + slot);
+      default -> throw new IllegalArgumentException("Unsupported ForgeBot role: " + role);
     }
   }
 

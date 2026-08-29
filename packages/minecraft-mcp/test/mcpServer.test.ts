@@ -3,9 +3,16 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
+import { mkdtemp, rm } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
+import { tmpdir } from 'node:os';
 import { MinecraftActionQueue } from '../src/actionQueue.js';
 import type { MinecraftBotPort, WorldObservation } from '../src/botPort.js';
+import {
+  BlueprintCatalog,
+  computeImportedBlueprintDigest,
+  ImportedBlueprintSchema,
+} from '../src/grabcraftBlueprint.js';
 import { createMinecraftMcpServer, startMinecraftMcpHttpServer } from '../src/mcpServer.js';
 import { PlanStore } from '../src/planStore.js';
 
@@ -72,12 +79,17 @@ describe('Minecraft MCP server', () => {
       'inspect_world',
       'locate_trees',
       'announce',
+      'import_blueprint_url',
+      'inspect_blueprint',
+      'enable_creative_mode',
+      'spawn_build_helpers',
       'begin_plan',
       'move_to',
       'gather_blocks',
       'harvest_tree',
       'craft_item',
       'execute_blueprint',
+      'execute_blueprint_batch',
       'drop_item',
       'finish_plan',
       'stop',
@@ -281,6 +293,130 @@ describe('Minecraft MCP server', () => {
 
     await client.close();
     await server.close();
+  });
+
+  it('binds an imported blueprint digest at approval and executes deterministic batches', async () => {
+    const stateDirectory = await mkdtemp(`${tmpdir()}/minecraft-mcp-catalog-`);
+    const catalog = new BlueprintCatalog(stateDirectory);
+    const immutable: Parameters<typeof computeImportedBlueprintDigest>[0] = {
+      schemaVersion: 1,
+      id: 'test-villa',
+      title: 'Test Villa',
+      author: 'Builder',
+      sourceUrl: 'https://www.grabcraft.com/minecraft/test-villa/modern-houses',
+      renderUrl: 'https://www.grabcraft.com/js/RenderObject/myRenderObject_1.js',
+      dimensions: { x: 2, y: 1, z: 1 },
+      sourceBlockCount: 2,
+      skippedBlockCount: 0,
+      skippedMaterials: [],
+      blocks: [
+        { dx: 0, dy: 0, dz: 0, block: 'quartz_block', legacyName: 'Quartz Block', phase: 'structure' },
+        { dx: 1, dy: 0, dz: 0, block: 'quartz_block', legacyName: 'Quartz Block', phase: 'structure' },
+      ],
+    };
+    const blueprint = ImportedBlueprintSchema.parse({
+      ...immutable,
+      fetchedAt: new Date(0).toISOString(),
+      digest: computeImportedBlueprintDigest(immutable),
+      supportedBlockCount: 2,
+      materialCounts: { quartz_block: 2 },
+      layerCounts: { '1': 2 },
+    });
+    await catalog.save(blueprint);
+    const bot = fakeBot();
+    const helperBot = fakeBot();
+    const executeBlueprint = vi.spyOn(helperBot, 'executeBlueprint');
+    const enableCreativeMode = vi.fn(async () => undefined);
+    const spawnBuildHelpers = vi.fn(async () => [{ id: 'sub_agent1', username: 'sub_agent1' }]);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createMinecraftMcpServer({
+      bot,
+      planStore: new PlanStore(),
+      actionQueue: new MinecraftActionQueue(),
+      blueprintCatalog: catalog,
+      enableCreativeMode,
+      spawnBuildHelpers,
+      resolveBuildWorker: workerId =>
+        workerId === 'sub_agent1' ? { bot: helperBot, actionQueue: new MinecraftActionQueue() } : null,
+    });
+    const client = new Client({ name: 'minecraft-blueprint-test', version: '1.0.0' });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    try {
+      const creative = TextResultSchema.parse(
+        await client.callTool({ name: 'enable_creative_mode', arguments: { reason: 'Reach the villa roof' } }),
+      );
+      expect(creative.isError).not.toBe(true);
+      expect(enableCreativeMode).toHaveBeenCalledOnce();
+      const helpers = TextResultSchema.parse(
+        await client.callTool({ name: 'spawn_build_helpers', arguments: { count: 1 } }),
+      );
+      expect(JSON.parse(firstText(helpers))).toMatchObject({ helpers: [{ id: 'sub_agent1' }] });
+
+      const inspection = TextResultSchema.parse(
+        await client.callTool({ name: 'inspect_blueprint', arguments: { blueprint_id: blueprint.id } }),
+      );
+      expect(JSON.parse(firstText(inspection))).toMatchObject({
+        blueprint: {
+          digest: blueprint.digest,
+          supported_block_count: 2,
+          batch_count: 1,
+          recommended_origin: { x: -1, y: 100, z: 0 },
+        },
+      });
+      const begun = TextResultSchema.parse(
+        await client.callTool({
+          name: 'begin_plan',
+          arguments: {
+            summary: 'Build the approved villa',
+            steps: ['Execute its deterministic batch'],
+            permitted_actions: ['build'],
+            duration_minutes: 15,
+            radius_blocks: 8,
+            blueprint: {
+              blueprint_id: blueprint.id,
+              digest: blueprint.digest,
+              origin: { x: -1, y: 100, z: 0 },
+            },
+          },
+        }),
+      );
+      const plan = z.object({ plan: z.object({ id: z.string() }) }).parse(JSON.parse(firstText(begun))).plan;
+      const execution = TextResultSchema.parse(
+        await client.callTool({
+          name: 'execute_blueprint_batch',
+          arguments: {
+            plan_id: plan.id,
+            blueprint_id: blueprint.id,
+            digest: blueprint.digest,
+            batch_index: 0,
+            worker_id: 'sub_agent1',
+          },
+        }),
+      );
+
+      expect(execution.isError).not.toBe(true);
+      expect(JSON.parse(firstText(execution))).toMatchObject({
+        batch_index: 0,
+        batch_count: 1,
+        next_batch_index: null,
+        worker_id: 'sub_agent1',
+      });
+      expect(executeBlueprint).toHaveBeenCalledWith(
+        expect.objectContaining({
+          origin: { x: -1, y: 100, z: 0 },
+          blocks: [
+            { dx: 0, dy: 0, dz: 0, block: 'quartz_block' },
+            { dx: 1, dy: 0, dz: 0, block: 'quartz_block' },
+          ],
+        }),
+      );
+    } finally {
+      await client.close();
+      await server.close();
+      await rm(stateDirectory, { recursive: true });
+    }
   });
 
   it('rejects oversized request bodies with HTTP 413 before creating an MCP server', async () => {

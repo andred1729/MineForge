@@ -1,6 +1,6 @@
 import { MinecraftActionQueue } from './actionQueue.js';
 import type { MinecraftBotPort } from './botPort.js';
-import { createBotIdentity, type BotIdentity } from './botRoles.js';
+import { createBotIdentity, type BotIdentity, type BotRole } from './botRoles.js';
 import { PlanStore } from './planStore.js';
 import type { TrueForgeSessionPort } from './trueforgePort.js';
 import type { TrueForgeProvisionerPort } from './trueforgeProvisioner.js';
@@ -30,6 +30,13 @@ export interface SpawnedBot {
   consoleUrl: string;
 }
 
+export interface BuildWorkerContext {
+  id: string;
+  username: string;
+  bot: ManagedMinecraftBot;
+  actionQueue: MinecraftActionQueue;
+}
+
 interface ActiveBot extends WorkforceBotContext {
   controller: SessionMirrorPort;
 }
@@ -46,11 +53,14 @@ export interface WorkforceManagerOptions {
   viewerBasePort?: number;
   provisioner: TrueForgeProvisionerPort;
   createBot(identity: BotIdentity): ManagedMinecraftBot;
+  createHelperBot?(username: string): ManagedMinecraftBot;
+  prepareHelper?(worker: { id: string; username: string; index: number }): Promise<void>;
   createSessionClient(record: WorkforceBotRecord): TrueForgeSessionPort;
   createController(options: {
     bot: MinecraftBotPort;
     session: TrueForgeSessionPort;
     onTurnCancelled: () => void;
+    acceptMinecraftChat: boolean;
   }): SessionMirrorPort;
 }
 
@@ -58,6 +68,7 @@ export class WorkforceCapacityError extends Error {}
 
 export class WorkforceManager {
   private readonly activeBots = new Map<string, ActiveBot>();
+  private readonly buildHelpers = new Map<string, Map<string, BuildWorkerContext>>();
   private state: WorkforceState | null = null;
   private spawnSequence: Promise<void> = Promise.resolve();
 
@@ -91,8 +102,8 @@ export class WorkforceManager {
     }
   }
 
-  spawn(): Promise<SpawnedBot> {
-    const result = this.spawnSequence.then(async () => await this.spawnNext());
+  spawn(requestedRole?: BotRole): Promise<SpawnedBot> {
+    const result = this.spawnSequence.then(async () => await this.spawnNext(requestedRole));
     this.spawnSequence = result.then(
       () => undefined,
       () => undefined,
@@ -128,12 +139,57 @@ export class WorkforceManager {
       .map(active => this.toSpawnedBot(active.record));
   }
 
+  async spawnBuildHelpers(ownerSlug: string, count: number): Promise<{ id: string; username: string }[]> {
+    const owner = this.activeBots.get(ownerSlug);
+    if (owner?.record.role !== 'builder') {
+      throw new Error('Only an active Builder can spawn build helpers.');
+    }
+    if (!Number.isInteger(count) || count < 1 || count > 3) {
+      throw new Error('A Builder may request between one and three helpers.');
+    }
+    if (this.options.createHelperBot === undefined) {
+      throw new Error('Build helpers are not configured for this bridge.');
+    }
+    const crew = this.buildHelpers.get(ownerSlug) ?? new Map<string, BuildWorkerContext>();
+    this.buildHelpers.set(ownerSlug, crew);
+    for (let index = 1; index <= count; index += 1) {
+      const id = `sub_agent${String(index)}`;
+      if (crew.has(id)) {
+        continue;
+      }
+      const bot = this.options.createHelperBot(id);
+      try {
+        await bot.start();
+        await this.options.prepareHelper?.({ id, username: id, index });
+        crew.set(id, { id, username: id, bot, actionQueue: new MinecraftActionQueue() });
+      } catch (caught) {
+        bot.stop();
+        await bot.close();
+        throw new Error(`Could not spawn visible helper ${id}.`, { cause: caught });
+      }
+    }
+    return [...crew.values()].slice(0, count).map(({ id, username }) => ({ id, username }));
+  }
+
+  resolveBuildWorker(ownerSlug: string, workerId: string): BuildWorkerContext | null {
+    return this.buildHelpers.get(ownerSlug)?.get(workerId) ?? null;
+  }
+
   async close(): Promise<void> {
     await this.closeActiveBots();
     this.state = null;
   }
 
   private async closeActiveBots(): Promise<void> {
+    const helpers = [...this.buildHelpers.values()].flatMap(crew => [...crew.values()]);
+    this.buildHelpers.clear();
+    await Promise.all(
+      helpers.map(async helper => {
+        helper.actionQueue.cancelActive();
+        helper.bot.stop();
+        await helper.bot.close();
+      }),
+    );
     const active = [...this.activeBots.values()];
     this.activeBots.clear();
     await Promise.all(
@@ -146,14 +202,14 @@ export class WorkforceManager {
     );
   }
 
-  private async spawnNext(): Promise<SpawnedBot> {
+  private async spawnNext(requestedRole?: BotRole): Promise<SpawnedBot> {
     const state = this.requireState();
     if (state.bots.length >= this.options.maxBots || state.nextOrdinal > this.options.maxBots) {
       throw new WorkforceCapacityError(
         `The Minecraft workforce already has its ${String(this.options.maxBots)} bot maximum.`,
       );
     }
-    const identity = createBotIdentity(state.nextOrdinal);
+    const identity = createBotIdentity(state.nextOrdinal, requestedRole);
     const active = await this.activate({ identity });
     const nextState: WorkforceState = {
       version: 1,
@@ -227,6 +283,7 @@ export class WorkforceManager {
       const controller = this.options.createController({
         bot,
         session,
+        acceptMinecraftChat: identity.role === 'builder',
         onTurnCancelled: () => {
           planStore.invalidate();
         },

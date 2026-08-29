@@ -14,12 +14,19 @@ export interface Position {
   z: number;
 }
 
+export const BlueprintPlanBindingSchema = z.object({
+  blueprint_id: z.string().min(1).max(100),
+  digest: z.string().regex(/^[a-f0-9]{64}$/),
+  origin: PositionSchema,
+});
+
 export const BeginPlanInputSchema = z.object({
   summary: z.string().min(1).max(500),
   steps: z.array(z.string().min(1).max(300)).min(1).max(12),
   permitted_actions: z.array(ActionSchema).min(1),
   duration_minutes: z.number().int().min(1).max(15).default(15),
   radius_blocks: z.number().int().min(1).max(32).default(32),
+  blueprint: BlueprintPlanBindingSchema.optional(),
 });
 export type BeginPlanInput = z.infer<typeof BeginPlanInputSchema>;
 
@@ -48,6 +55,7 @@ export const PlanSchema = z.object({
   radiusBlocks: z.number().int().positive(),
   createdAt: z.number().int().nonnegative(),
   expiresAt: z.number().int().positive(),
+  blueprint: BlueprintPlanBindingSchema.optional(),
 });
 export type Plan = z.infer<typeof PlanSchema>;
 

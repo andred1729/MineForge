@@ -129,6 +129,9 @@ importers:
       mineflayer-pathfinder:
         specifier: 2.4.5
         version: 2.4.5(supports-color@8.1.1)
+      prismarine-item:
+        specifier: 1.18.0
+        version: 1.18.0(supports-color@8.1.1)
       prismarine-viewer:
         specifier: 1.33.0
         version: 1.33.0(supports-color@8.1.1)

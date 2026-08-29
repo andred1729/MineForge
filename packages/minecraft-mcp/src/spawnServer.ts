@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 
 import { z } from 'zod';
 
+import { BotRoleSchema } from './botRoles.js';
 import { WorkforceCapacityError, type SpawnedBot } from './workforceManager.js';
 
 const SpawnRequestSchema = z.object({
@@ -15,6 +16,7 @@ const SpawnRequestSchema = z.object({
   z: z.coerce.number(),
   yaw: z.coerce.number(),
   pitch: z.coerce.number(),
+  requested_role: BotRoleSchema,
 });
 export type SpawnRequest = z.infer<typeof SpawnRequestSchema>;
 
@@ -133,7 +135,9 @@ export function startSpawnServer({
           return;
         }
         const input = SpawnRequestSchema.parse(form);
-        console.log(`Minecraft /spawn requested by ${input.requester_name} in ${input.world_name}.`);
+        console.log(
+          `Minecraft /spawn ${input.requested_role} requested by ${input.requester_name} in ${input.world_name}.`,
+        );
         const bot = await spawn(input);
         writeText(response, 201, bot.username);
       } catch (caught) {

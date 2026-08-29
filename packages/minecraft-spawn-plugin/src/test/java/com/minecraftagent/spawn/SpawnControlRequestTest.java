@@ -21,13 +21,15 @@ final class SpawnControlRequestTest {
             64.0,
             -3.25,
             90.0f,
-            5.0f);
+            5.0f,
+            "builder");
 
     String body = request.toFormBody();
 
     assertTrue(body.contains("requester_name=Player+One"));
     assertTrue(body.contains("world_name=Demo+World"));
     assertTrue(body.contains("z=-3.25"));
+    assertTrue(body.contains("requested_role=builder"));
     assertTrue(!body.contains("secret-token"));
 
     HttpRequest httpRequest =

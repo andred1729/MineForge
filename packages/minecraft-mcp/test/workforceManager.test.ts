@@ -28,7 +28,7 @@ async function temporaryDirectory(): Promise<string> {
   return directory;
 }
 
-function fakeBot(identity: BotIdentity): ManagedMinecraftBot {
+function fakeBot(identity: Pick<BotIdentity, 'username'>): ManagedMinecraftBot {
   const observation: WorldObservation = {
     connected: true,
     username: identity.username,
@@ -98,6 +98,34 @@ function managerOptions({
 }
 
 describe('Minecraft workforce manager', () => {
+  it('spawns a requested Builder first and attaches visible helper bodies', async () => {
+    const identities: BotIdentity[] = [];
+    const prepared: string[] = [];
+    const options = managerOptions({
+      stateDirectory: await temporaryDirectory(),
+      provisioner: {
+        ensureProvider: async () => undefined,
+        provisionBot: async ({ identity }) => ({ agentId: `agent-${identity.slug}`, sessionId: 'builder-session' }),
+      },
+      identities,
+    });
+    options.createHelperBot = username => fakeBot({ username });
+    options.prepareHelper = async ({ username }) => {
+      prepared.push(username);
+    };
+    const manager = new WorkforceManager(options);
+    await manager.start();
+
+    await expect(manager.spawn('builder')).resolves.toMatchObject({ username: 'ForgeBot1', role: 'builder' });
+    await expect(manager.spawnBuildHelpers('forgebot1', 2)).resolves.toEqual([
+      { id: 'sub_agent1', username: 'sub_agent1' },
+      { id: 'sub_agent2', username: 'sub_agent2' },
+    ]);
+    expect(prepared).toEqual(['sub_agent1', 'sub_agent2']);
+    expect(manager.resolveBuildWorker('forgebot1', 'sub_agent2')).toMatchObject({ username: 'sub_agent2' });
+    await manager.close();
+  });
+
   it('serializes concurrent spawns into five unique role slots', async () => {
     const identities: BotIdentity[] = [];
     const provisioner: TrueForgeProvisionerPort = {

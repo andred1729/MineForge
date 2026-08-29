@@ -1,6 +1,8 @@
-import { demoWorksitesForRole } from './botRoles.js';
+import { BUILDER_DEMO_ORIGIN, demoWorksitesForRole } from './botRoles.js';
 import { loadWorkforceConfig } from './config.js';
+import { BlueprintCatalog } from './grabcraftBlueprint.js';
 import { createMinecraftMcpServer, startMinecraftMcpHttpServer } from './mcpServer.js';
+import { DockerMinecraftAdmin } from './minecraftAdmin.js';
 import { MineflayerBot } from './mineflayerBot.js';
 import { SessionMirrorController } from './sessionMirrorController.js';
 import { startSpawnServer } from './spawnServer.js';
@@ -27,6 +29,8 @@ export async function main(): Promise<void> {
   };
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
+  const blueprintCatalog = new BlueprintCatalog(config.stateDirectory);
+  const minecraftAdmin = new DockerMinecraftAdmin();
 
   const provisioner = new TrueForgeProvisioner({
     baseUrl: config.trueforgeBaseUrl,
@@ -48,13 +52,29 @@ export async function main(): Promise<void> {
         username: identity.username,
         version: config.minecraftVersion,
       }),
+    createHelperBot: username =>
+      new MineflayerBot({
+        host: config.minecraftHost,
+        port: config.minecraftPort,
+        username,
+        version: config.minecraftVersion,
+      }),
+    prepareHelper: async ({ username, index }) => {
+      await minecraftAdmin.setCreativeMode(username);
+      await minecraftAdmin.teleport(username, {
+        x: BUILDER_DEMO_ORIGIN.x + 12 + index * 2,
+        y: BUILDER_DEMO_ORIGIN.y + 1,
+        z: BUILDER_DEMO_ORIGIN.z + 16,
+      });
+    },
     createSessionClient: record =>
       new TrueForgeSessionClient({
         baseUrl: config.trueforgeBaseUrl,
         ...(config.trueforgeToken === undefined ? {} : { token: config.trueforgeToken }),
         sessionId: record.sessionId,
       }),
-    createController: ({ bot, session, onTurnCancelled }) => new SessionMirrorController(bot, session, onTurnCancelled),
+    createController: ({ bot, session, onTurnCancelled, acceptMinecraftChat }) =>
+      new SessionMirrorController(bot, session, onTurnCancelled, 1_000, acceptMinecraftChat),
   });
   const mcpHttpServer = startMinecraftMcpHttpServer({
     host: config.mcpHost,
@@ -72,7 +92,18 @@ export async function main(): Promise<void> {
               bot: context.bot,
               planStore: context.planStore,
               actionQueue: context.actionQueue,
+              blueprintCatalog,
               additionalPlanOrigins: demoWorksitesForRole(context.record.role),
+              ...(context.record.role === 'builder'
+                ? {
+                    recommendedBlueprintOrigin: { ...BUILDER_DEMO_ORIGIN },
+                    enableCreativeMode: async () => {
+                      await minecraftAdmin.setCreativeMode(context.record.username);
+                    },
+                    spawnBuildHelpers: async (count: number) => await workforce.spawnBuildHelpers(slug, count),
+                    resolveBuildWorker: (workerId: string) => workforce.resolveBuildWorker(slug, workerId),
+                  }
+                : {}),
             });
     },
   });
@@ -80,7 +111,7 @@ export async function main(): Promise<void> {
     host: config.spawnHost,
     port: config.spawnPort,
     token: config.spawnToken,
-    spawn: async () => await workforce.spawn(),
+    spawn: async request => await workforce.spawn(request.requested_role),
     rollback: async username => await workforce.rollback(username),
   });
 

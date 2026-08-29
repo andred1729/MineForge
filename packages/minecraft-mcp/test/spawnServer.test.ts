@@ -13,18 +13,19 @@ const FORM = new URLSearchParams({
   z: '-2.5',
   yaw: '90',
   pitch: '0',
+  requested_role: 'builder',
 });
 
 describe('Minecraft spawn ingress', () => {
   it('requires the shared token and accepts the Paper plugin form contract', async () => {
-    const requests: string[] = [];
+    const requests: Array<{ requester: string; role: string }> = [];
     const server = startSpawnServer({
       host: '127.0.0.1',
       port: 0,
       token: 'test-token-at-least-16-characters',
       rollback: async () => false,
       spawn: async request => {
-        requests.push(request.requester_name);
+        requests.push({ requester: request.requester_name, role: request.requested_role });
         return {
           username: 'ForgeBot1',
           role: 'lumberjack',
@@ -47,7 +48,7 @@ describe('Minecraft spawn ingress', () => {
       });
       expect(accepted.status).toBe(201);
       expect(await accepted.text()).toBe('ForgeBot1');
-      expect(requests).toEqual(['DemoPlayer']);
+      expect(requests).toEqual([{ requester: 'DemoPlayer', role: 'builder' }]);
     } finally {
       await server.close();
     }

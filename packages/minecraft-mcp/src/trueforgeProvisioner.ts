@@ -39,12 +39,13 @@ function agentManifest({ identity, modelFqn }: { identity: BotIdentity; modelFqn
         name: identity.connectorName,
         preload: true,
         enableTools: ['@all'],
-        requireApprovalForTools: ['begin_plan'],
+        requireApprovalForTools:
+          identity.role === 'builder' ? ['enable_creative_mode', 'spawn_build_helpers', 'begin_plan'] : ['begin_plan'],
       },
     ],
     config: {
       askUserQuestions: { enabled: true },
-      dynamicSubAgents: { enabled: false },
+      dynamicSubAgents: { enabled: identity.role === 'builder' },
       generativeUi: { enabled: false },
       iterationLimit: 100,
       sandbox: { enabled: false },

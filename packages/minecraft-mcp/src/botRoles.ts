@@ -25,13 +25,18 @@ const ROLE_LABELS: Record<BotRole, string> = {
 };
 
 export const LUMBERJACK_DEMO_WORKSITE: Readonly<Position> = { x: -46, y: 66, z: -6 };
+export const BUILDER_DEMO_ORIGIN: Readonly<Position> = { x: 2, y: 64, z: 0 };
+export const BUILDER_DEMO_CENTER: Readonly<Position> = { x: 18, y: 64, z: 16 };
 
 export function demoWorksitesForRole(role: BotRole): Position[] {
-  return role === 'lumberjack' ? [{ ...LUMBERJACK_DEMO_WORKSITE }] : [];
+  if (role === 'lumberjack') {
+    return [{ ...LUMBERJACK_DEMO_WORKSITE }];
+  }
+  return role === 'builder' ? [{ ...BUILDER_DEMO_CENTER }] : [];
 }
 
-export function createBotIdentity(ordinal: number): BotIdentity {
-  const role = ROLE_SLOTS[ordinal - 1];
+export function createBotIdentity(ordinal: number, requestedRole?: BotRole): BotIdentity {
+  const role = requestedRole ?? ROLE_SLOTS[ordinal - 1];
   if (role === undefined) {
     throw new Error('The Minecraft workforce is limited to five bots.');
   }
