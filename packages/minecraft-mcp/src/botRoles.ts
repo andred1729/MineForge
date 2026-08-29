@@ -15,7 +15,7 @@ export const BotIdentitySchema = z.object({
 });
 export type BotIdentity = z.infer<typeof BotIdentitySchema>;
 
-export const BOT_ROLES: readonly BotRole[] = ['lumberjack', 'miner', 'builder', 'hunter', 'scout'];
+const BOT_ROLES: readonly BotRole[] = ['lumberjack', 'miner', 'builder', 'hunter', 'scout'];
 const ROLE_LABELS: Record<BotRole, string> = {
   lumberjack: 'Lumberjack',
   miner: 'Miner',
@@ -26,8 +26,8 @@ const ROLE_LABELS: Record<BotRole, string> = {
 
 export const LUMBERJACK_DEMO_WORKSITE: Readonly<Position> = { x: -46, y: 66, z: -6 };
 
-export function demoWorksitesForRole(role: BotRole): Position[] {
-  return role === 'lumberjack' ? [{ ...LUMBERJACK_DEMO_WORKSITE }] : [];
+export function demoWorksites(): Position[] {
+  return [{ ...LUMBERJACK_DEMO_WORKSITE }];
 }
 
 export function createBotIdentity(ordinal: number): BotIdentity {
@@ -45,10 +45,6 @@ export function createBotIdentity(ordinal: number): BotIdentity {
     connectorName: `minecraft-${slug}`,
     agentName: `${slug}-${role}`,
   });
-}
-
-export function createBotIdentityForRole(role: BotRole): BotIdentity {
-  return createBotIdentity(BOT_ROLES.indexOf(role) + 1);
 }
 
 export function roleActivationMessage(identity: BotIdentity): string {

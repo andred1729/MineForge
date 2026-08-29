@@ -1,8 +1,8 @@
-import { demoWorksitesForRole } from './botRoles.js';
+import { demoWorksites } from './botRoles.js';
 import { loadWorkforceConfig } from './config.js';
 import { createMinecraftMcpServer, startMinecraftMcpHttpServer } from './mcpServer.js';
 import { MineflayerBot } from './mineflayerBot.js';
-import { SessionMirrorController } from './sessionMirrorController.js';
+import { SessionLifecycleController } from './sessionLifecycleController.js';
 import { startSpawnServer } from './spawnServer.js';
 import { waitForTrueForge } from './trueforgeHealth.js';
 import { TrueForgeSessionClient } from './trueforgePort.js';
@@ -54,7 +54,8 @@ export async function main(): Promise<void> {
         ...(config.trueforgeToken === undefined ? {} : { token: config.trueforgeToken }),
         sessionId: record.sessionId,
       }),
-    createController: ({ bot, session, onTurnCancelled }) => new SessionMirrorController(bot, session, onTurnCancelled),
+    createController: ({ bot, session, onTurnCancelled }) =>
+      new SessionLifecycleController(bot, session, onTurnCancelled),
   });
   const mcpHttpServer = startMinecraftMcpHttpServer({
     host: config.mcpHost,
@@ -72,8 +73,7 @@ export async function main(): Promise<void> {
               bot: context.bot,
               planStore: context.planStore,
               actionQueue: context.actionQueue,
-              additionalPlanOrigins: demoWorksitesForRole(context.record.role),
-              role: context.record.role,
+              additionalPlanOrigins: demoWorksites(),
             });
     },
   });
@@ -81,7 +81,7 @@ export async function main(): Promise<void> {
     host: config.spawnHost,
     port: config.spawnPort,
     token: config.spawnToken,
-    spawn: async request => await workforce.spawn(request.role),
+    spawn: async () => await workforce.spawn(),
     rollback: async username => await workforce.rollback(username),
     ready: async username => await workforce.ready(username),
   });

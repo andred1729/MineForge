@@ -1,12 +1,6 @@
 import { MinecraftActionQueue } from './actionQueue.js';
 import type { MinecraftBotPort } from './botPort.js';
-import {
-  BOT_ROLES,
-  createBotIdentityForRole,
-  roleActivationMessage,
-  type BotIdentity,
-  type BotRole,
-} from './botRoles.js';
+import { createBotIdentity, roleActivationMessage, type BotIdentity } from './botRoles.js';
 import { PlanStore } from './planStore.js';
 import type { TrueForgeSessionPort } from './trueforgePort.js';
 import type { TrueForgeProvisionerPort } from './trueforgeProvisioner.js';
@@ -37,11 +31,11 @@ export interface SpawnedBot {
 }
 
 interface ActiveBot extends WorkforceBotContext {
-  controller: SessionMirrorPort;
+  controller: SessionControllerPort;
   session: TrueForgeSessionPort;
 }
 
-export interface SessionMirrorPort {
+export interface SessionControllerPort {
   start(): Promise<void>;
   close(): Promise<void>;
 }
@@ -58,7 +52,7 @@ export interface WorkforceManagerOptions {
     bot: MinecraftBotPort;
     session: TrueForgeSessionPort;
     onTurnCancelled: () => void;
-  }): SessionMirrorPort;
+  }): SessionControllerPort;
 }
 
 export class WorkforceCapacityError extends Error {}
@@ -98,8 +92,8 @@ export class WorkforceManager {
     }
   }
 
-  spawn(role: BotRole): Promise<SpawnedBot> {
-    const result = this.spawnSequence.then(async () => await this.spawnRole(role));
+  spawn(): Promise<SpawnedBot> {
+    const result = this.spawnSequence.then(async () => await this.spawnNext());
     this.spawnSequence = result.then(
       () => undefined,
       () => undefined,
@@ -162,21 +156,18 @@ export class WorkforceManager {
     );
   }
 
-  private async spawnRole(role: BotRole): Promise<SpawnedBot> {
+  private async spawnNext(): Promise<SpawnedBot> {
     const state = this.requireState();
-    if (state.bots.some(record => record.role === role)) {
-      throw new WorkforceCapacityError(`The ${role} ForgeBot is already active.`);
-    }
-    if (state.bots.length >= this.options.maxBots) {
+    if (state.bots.length >= this.options.maxBots || state.nextOrdinal > this.options.maxBots) {
       throw new WorkforceCapacityError(
         `The Minecraft workforce already has its ${String(this.options.maxBots)} bot maximum.`,
       );
     }
-    const identity = createBotIdentityForRole(role);
+    const identity = createBotIdentity(state.nextOrdinal);
     const active = await this.activate({ identity });
     const nextState: WorkforceState = {
       version: 1,
-      nextOrdinal: this.nextAvailableOrdinal([...state.bots, active.record]),
+      nextOrdinal: identity.ordinal + 1,
       bots: [...state.bots, active.record],
     };
     try {
@@ -205,7 +196,7 @@ export class WorkforceManager {
     }
     const nextState: WorkforceState = {
       version: 1,
-      nextOrdinal: this.nextAvailableOrdinal(state.bots.slice(0, -1)),
+      nextOrdinal: record.ordinal,
       bots: state.bots.slice(0, -1),
     };
     await saveWorkforceState({ directory: this.options.stateDirectory, state: nextState });
@@ -229,12 +220,6 @@ export class WorkforceManager {
     }
     await active.session.createUserTurn(roleActivationMessage(active.record));
     return true;
-  }
-
-  private nextAvailableOrdinal(records: WorkforceBotRecord[]): number {
-    const occupied = new Set(records.map(record => record.ordinal));
-    const availableIndex = BOT_ROLES.findIndex((_, index) => !occupied.has(index + 1));
-    return availableIndex === -1 ? 6 : availableIndex + 1;
   }
 
   private async activate({

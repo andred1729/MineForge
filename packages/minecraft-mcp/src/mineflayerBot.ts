@@ -7,7 +7,6 @@ import prismarineViewer from 'prismarine-viewer';
 import { Vec3 } from 'vec3';
 
 import type { ActionProgress, MinecraftBotPort, NearbyBlock, NearbyEntity, WorldObservation } from './botPort.js';
-import { splitChatMessage } from './chat.js';
 import type { BlueprintBlock, Plan, Position } from './domain.js';
 import {
   hasSafeSwordClearance,
@@ -132,7 +131,6 @@ export async function runAbortable<T>({
 
 export class MineflayerBot implements MinecraftBotPort {
   private bot: Bot | null = null;
-  private readonly chatListeners = new Set<(event: { username: string; message: string }) => void>();
 
   constructor(private readonly options: MineflayerBotOptions) {}
 
@@ -149,11 +147,6 @@ export class MineflayerBot implements MinecraftBotPort {
       version: this.options.version,
     });
     bot.loadPlugin(pathfinder);
-    bot.on('chat', (username, message) => {
-      for (const listener of this.chatListeners) {
-        listener({ username, message });
-      }
-    });
     this.bot = bot;
 
     try {
@@ -842,19 +835,6 @@ export class MineflayerBot implements MinecraftBotPort {
     bot.pathfinder.stop();
     bot.stopDigging();
     bot.clearControlStates();
-  }
-
-  async say(message: string): Promise<void> {
-    const bot = this.requireBot();
-    for (const part of splitChatMessage(message)) {
-      bot.chat(part);
-      await new Promise(resolve => setTimeout(resolve, 350));
-    }
-  }
-
-  onChat(listener: (event: { username: string; message: string }) => void): () => void {
-    this.chatListeners.add(listener);
-    return () => this.chatListeners.delete(listener);
   }
 
   private async collectDrops({

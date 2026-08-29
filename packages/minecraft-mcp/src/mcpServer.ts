@@ -8,7 +8,6 @@ import { z } from 'zod';
 
 import { MinecraftActionQueue } from './actionQueue.js';
 import type { MinecraftBotPort } from './botPort.js';
-import type { BotRole } from './botRoles.js';
 import { BeginPlanInputSchema, BlueprintSchema, PlanOutcomeSchema, PositionSchema, type Position } from './domain.js';
 import { HUNT_SPECIES, HuntSpeciesSchema } from './hunting.js';
 import { PlanStore } from './planStore.js';
@@ -114,13 +113,11 @@ export function createMinecraftMcpServer({
   planStore,
   actionQueue,
   additionalPlanOrigins = [],
-  role,
 }: {
   bot: MinecraftBotPort;
   planStore: PlanStore;
   actionQueue: MinecraftActionQueue;
   additionalPlanOrigins?: Position[];
-  role: BotRole;
 }): McpServer {
   const server = new McpServer({ name: 'minecraft-agent', version: '0.1.0' });
 
@@ -140,71 +137,53 @@ export function createMinecraftMcpServer({
       })),
   );
 
-  if (role === 'lumberjack') {
-    server.registerTool(
-      'locate_trees',
-      {
-        description:
-          'Locate complete natural trees of one log type. Results exclude player log structures, partial trees, and trees crossing the search boundary.',
-        inputSchema: z.object({
-          block_name: z.string().min(1).max(64).default('oak_log'),
-          max_distance: z.number().int().min(1).max(32).default(24),
-        }),
-        annotations: { readOnlyHint: true, openWorldHint: true },
-      },
-      async ({ block_name: blockName, max_distance: maxDistance }) =>
-        await executeTool(() => ({ trees: bot.locateNaturalTrees({ blockName, maxDistance }) })),
-    );
-  }
-
-  if (role === 'hunter') {
-    server.registerTool(
-      'locate_entities',
-      {
-        description:
-          'Find the nearest eligible living entities for the Hunter. Results are distance-sorted cows, pigs, sheep, and chickens; players and protected entities are excluded.',
-        inputSchema: z.object({
-          max_distance: z.number().int().min(1).max(32).default(24),
-          limit: z.number().int().min(1).max(20).default(10),
-        }),
-        annotations: { readOnlyHint: true, openWorldHint: true },
-      },
-      async ({ max_distance: maxDistance, limit }) =>
-        await executeTool(() => ({
-          entities: HUNT_SPECIES.flatMap(species => bot.locateAnimals({ species, maxDistance }))
-            .sort((left, right) => left.distance - right.distance)
-            .slice(0, limit),
-        })),
-    );
-
-    server.registerTool(
-      'locate_animals',
-      {
-        description:
-          'Locate nearby unnamed passive animals of one approved species. Players, villagers, pets, named animals, and hostile mobs are never returned.',
-        inputSchema: z.object({
-          species: HuntSpeciesSchema,
-          max_distance: z.number().int().min(1).max(32).default(24),
-        }),
-        annotations: { readOnlyHint: true, openWorldHint: true },
-      },
-      async ({ species, max_distance: maxDistance }) =>
-        await executeTool(() => ({ animals: bot.locateAnimals({ species, maxDistance }) })),
-    );
-  }
+  server.registerTool(
+    'locate_trees',
+    {
+      description:
+        'Locate complete natural trees of one log type. Results exclude player log structures, partial trees, and trees crossing the search boundary.',
+      inputSchema: z.object({
+        block_name: z.string().min(1).max(64).default('oak_log'),
+        max_distance: z.number().int().min(1).max(32).default(24),
+      }),
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ block_name: blockName, max_distance: maxDistance }) =>
+      await executeTool(() => ({ trees: bot.locateNaturalTrees({ blockName, maxDistance }) })),
+  );
 
   server.registerTool(
-    'announce',
+    'locate_entities',
     {
-      description: 'Say a concise status update in Minecraft chat so nearby players know what this bot is doing.',
-      inputSchema: z.object({ message: z.string().min(1).max(300) }),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-    },
-    async ({ message }) =>
-      await executeTool(async () => {
-        await bot.say(message);
-        return { announced: true, message };
+      description:
+        'Find the nearest eligible living entities. Results are distance-sorted cows, pigs, sheep, and chickens; players and protected entities are excluded.',
+      inputSchema: z.object({
+        max_distance: z.number().int().min(1).max(32).default(24),
+        limit: z.number().int().min(1).max(20).default(10),
       }),
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ max_distance: maxDistance, limit }) =>
+      await executeTool(() => ({
+        entities: HUNT_SPECIES.flatMap(species => bot.locateAnimals({ species, maxDistance }))
+          .sort((left, right) => left.distance - right.distance)
+          .slice(0, limit),
+      })),
+  );
+
+  server.registerTool(
+    'locate_animals',
+    {
+      description:
+        'Locate nearby unnamed passive animals of one approved species. Players, villagers, pets, named animals, and hostile mobs are never returned.',
+      inputSchema: z.object({
+        species: HuntSpeciesSchema,
+        max_distance: z.number().int().min(1).max(32).default(24),
+      }),
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    async ({ species, max_distance: maxDistance }) =>
+      await executeTool(() => ({ animals: bot.locateAnimals({ species, maxDistance }) })),
   );
 
   server.registerTool(
@@ -216,10 +195,9 @@ export function createMinecraftMcpServer({
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     async input =>
-      await executeTool(async () => {
+      await executeTool(() => {
         const additionalOrigins = additionalPlanOrigins.map(({ x, y, z }) => ({ x, y, z }));
         const plan = planStore.begin({ input, origin: bot.position(), additionalOrigins });
-        await bot.say(`Approved plan started: ${plan.summary}`);
         return { plan };
       }),
   );
@@ -289,77 +267,73 @@ export function createMinecraftMcpServer({
       }),
   );
 
-  if (role === 'lumberjack') {
-    server.registerTool(
-      'harvest_tree',
-      {
-        description:
-          'Harvest complete natural trees until the requested log count is verified in inventory. The final tree is always finished, so completed may exceed requested.',
-        inputSchema: z.object({
-          plan_id: PlanIdSchema,
-          block_name: z.string().min(1).max(64).default('oak_log'),
-          count: z.number().int().min(1).max(32),
-          max_distance: z.number().int().min(1).max(32).default(24),
-        }),
-        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-      },
-      async ({ plan_id: planId, block_name: blockName, count, max_distance: maxDistance }, extra) =>
-        await executeActionTool({
-          signal: extra.signal,
-          bot,
-          planStore,
-          actionQueue,
-          operation: async activeSignal => {
-            const plan = planStore.require({ planId, action: 'gather' });
-            const boundedDistance = Math.min(maxDistance, plan.radiusBlocks);
-            return await bot.harvestTrees({
-              blockName,
-              count,
-              maxDistance: boundedDistance,
-              plan,
-              signal: activeSignal,
-              assertAuthorized: () => planStore.require({ planId, action: 'gather' }),
-            });
-          },
-        }),
-    );
-  }
+  server.registerTool(
+    'harvest_tree',
+    {
+      description:
+        'Harvest complete natural trees until the requested log count is verified in inventory. The final tree is always finished, so completed may exceed requested.',
+      inputSchema: z.object({
+        plan_id: PlanIdSchema,
+        block_name: z.string().min(1).max(64).default('oak_log'),
+        count: z.number().int().min(1).max(32),
+        max_distance: z.number().int().min(1).max(32).default(24),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    },
+    async ({ plan_id: planId, block_name: blockName, count, max_distance: maxDistance }, extra) =>
+      await executeActionTool({
+        signal: extra.signal,
+        bot,
+        planStore,
+        actionQueue,
+        operation: async activeSignal => {
+          const plan = planStore.require({ planId, action: 'gather' });
+          const boundedDistance = Math.min(maxDistance, plan.radiusBlocks);
+          return await bot.harvestTrees({
+            blockName,
+            count,
+            maxDistance: boundedDistance,
+            plan,
+            signal: activeSignal,
+            assertAuthorized: () => planStore.require({ planId, action: 'gather' }),
+          });
+        },
+      }),
+  );
 
-  if (role === 'hunter') {
-    server.registerTool(
-      'hunt_animals',
-      {
-        description:
-          'Pursue and kill a bounded number of unnamed passive animals, then collect and report verified drops. Only cows, pigs, sheep, and chickens are eligible.',
-        inputSchema: z.object({
-          plan_id: PlanIdSchema,
-          species: HuntSpeciesSchema,
-          count: z.number().int().min(1).max(8),
-          max_distance: z.number().int().min(1).max(32).default(24),
-        }),
-        annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-      },
-      async ({ plan_id: planId, species, count, max_distance: maxDistance }, extra) =>
-        await executeActionTool({
-          signal: extra.signal,
-          bot,
-          planStore,
-          actionQueue,
-          operation: async activeSignal => {
-            const plan = planStore.require({ planId, action: 'hunt' });
-            const boundedDistance = Math.min(maxDistance, plan.radiusBlocks);
-            return await bot.huntAnimals({
-              species,
-              count,
-              maxDistance: boundedDistance,
-              plan,
-              signal: activeSignal,
-              assertAuthorized: () => planStore.require({ planId, action: 'hunt' }),
-            });
-          },
-        }),
-    );
-  }
+  server.registerTool(
+    'hunt_animals',
+    {
+      description:
+        'Pursue and kill a bounded number of unnamed passive animals, then collect and report verified drops. Only cows, pigs, sheep, and chickens are eligible.',
+      inputSchema: z.object({
+        plan_id: PlanIdSchema,
+        species: HuntSpeciesSchema,
+        count: z.number().int().min(1).max(8),
+        max_distance: z.number().int().min(1).max(32).default(24),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    },
+    async ({ plan_id: planId, species, count, max_distance: maxDistance }, extra) =>
+      await executeActionTool({
+        signal: extra.signal,
+        bot,
+        planStore,
+        actionQueue,
+        operation: async activeSignal => {
+          const plan = planStore.require({ planId, action: 'hunt' });
+          const boundedDistance = Math.min(maxDistance, plan.radiusBlocks);
+          return await bot.huntAnimals({
+            species,
+            count,
+            maxDistance: boundedDistance,
+            plan,
+            signal: activeSignal,
+            assertAuthorized: () => planStore.require({ planId, action: 'hunt' }),
+          });
+        },
+      }),
+  );
 
   server.registerTool(
     'craft_item',
@@ -463,10 +437,9 @@ export function createMinecraftMcpServer({
         bot,
         planStore,
         actionQueue,
-        operation: async () => {
+        operation: () => {
           planStore.finish(planId);
-          await bot.say(`Plan ${outcome}: ${summary}`);
-          return { outcome, summary };
+          return Promise.resolve({ outcome, summary });
         },
       }),
   );
@@ -479,10 +452,9 @@ export function createMinecraftMcpServer({
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async ({ reason }) =>
-      await executeTool(async () => {
+      await executeTool(() => {
         bot.stop();
         planStore.invalidate();
-        await bot.say(reason);
         return { stopped: true, reason };
       }),
   );

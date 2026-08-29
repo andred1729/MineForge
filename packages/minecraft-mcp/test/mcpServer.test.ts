@@ -52,8 +52,6 @@ function fakeBot(): MinecraftBotPort {
     executeBlueprint: async ({ blocks }) => ({ requested: blocks.length, completed: blocks.length, details: [] }),
     drop: async ({ count }) => ({ requested: count, completed: count, details: [] }),
     stop: () => {},
-    say: async () => {},
-    onChat: () => () => {},
   };
 }
 
@@ -64,7 +62,6 @@ describe('Minecraft MCP server', () => {
       bot: fakeBot(),
       planStore: new PlanStore(),
       actionQueue: new MinecraftActionQueue(),
-      role: 'lumberjack',
     });
     const client = new Client({ name: 'minecraft-test', version: '1.0.0' });
     await server.connect(serverTransport);
@@ -74,11 +71,13 @@ describe('Minecraft MCP server', () => {
     expect(catalog.tools.map(tool => tool.name)).toEqual([
       'inspect_world',
       'locate_trees',
-      'announce',
+      'locate_entities',
+      'locate_animals',
       'begin_plan',
       'move_to',
       'gather_blocks',
       'harvest_tree',
+      'hunt_animals',
       'craft_item',
       'execute_blueprint',
       'drop_item',
@@ -141,7 +140,6 @@ describe('Minecraft MCP server', () => {
       bot,
       planStore,
       actionQueue: new MinecraftActionQueue(),
-      role: 'lumberjack',
     });
     const client = new Client({ name: 'minecraft-expiry-test', version: '1.0.0' });
     await server.connect(serverTransport);
@@ -177,15 +175,13 @@ describe('Minecraft MCP server', () => {
     await server.close();
   });
 
-  it('locates natural trees, announces status, and harvests only under an approved gather plan', async () => {
+  it('locates natural trees and harvests only under an approved gather plan', async () => {
     const bot = fakeBot();
-    const say = vi.fn(async () => {});
     const harvestTrees = vi.fn<MinecraftBotPort['harvestTrees']>(async ({ count }) => ({
       requested: count,
       completed: 5,
       details: ['Harvested one complete tree and verified five logs.'],
     }));
-    bot.say = say;
     bot.locateNaturalTrees = () => [
       {
         logName: 'oak_log',
@@ -204,7 +200,6 @@ describe('Minecraft MCP server', () => {
       planStore: new PlanStore(),
       actionQueue: new MinecraftActionQueue(),
       additionalPlanOrigins: [{ x: -46, y: 66, z: -6 }],
-      role: 'lumberjack',
     });
     const client = new Client({ name: 'minecraft-lumberjack-test', version: '1.0.0' });
     await server.connect(serverTransport);
@@ -216,12 +211,6 @@ describe('Minecraft MCP server', () => {
     expect(JSON.parse(firstText(located))).toMatchObject({
       trees: [{ logName: 'oak_log', root: { x: 4, y: 64, z: 2 } }],
     });
-
-    const announced = TextResultSchema.parse(
-      await client.callTool({ name: 'announce', arguments: { message: 'I am looking for an oak tree.' } }),
-    );
-    expect(announced.isError).not.toBe(true);
-    expect(say).toHaveBeenCalledWith('I am looking for an oak tree.');
 
     const denied = TextResultSchema.parse(
       await client.callTool({
@@ -265,7 +254,7 @@ describe('Minecraft MCP server', () => {
     await server.close();
   });
 
-  it('exposes hunting only to the hunter and requires an approved hunt plan', async () => {
+  it('exposes hunting to every bot and requires an approved hunt plan', async () => {
     const bot = fakeBot();
     const huntAnimals = vi.fn<MinecraftBotPort['huntAnimals']>(async ({ count }) => ({
       requested: count,
@@ -280,7 +269,6 @@ describe('Minecraft MCP server', () => {
       bot,
       planStore: new PlanStore(),
       actionQueue: new MinecraftActionQueue(),
-      role: 'hunter',
     });
     const client = new Client({ name: 'minecraft-hunter-test', version: '1.0.0' });
     await server.connect(serverTransport);
@@ -290,7 +278,7 @@ describe('Minecraft MCP server', () => {
     expect(catalog.tools.map(tool => tool.name)).toEqual(
       expect.arrayContaining(['locate_entities', 'locate_animals', 'hunt_animals']),
     );
-    expect(catalog.tools.map(tool => tool.name)).not.toEqual(expect.arrayContaining(['locate_trees', 'harvest_tree']));
+    expect(catalog.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(['locate_trees', 'harvest_tree']));
     const nearest = TextResultSchema.parse(
       await client.callTool({ name: 'locate_entities', arguments: { max_distance: 16, limit: 2 } }),
     );
@@ -346,7 +334,6 @@ describe('Minecraft MCP server', () => {
           bot: fakeBot(),
           planStore: new PlanStore(),
           actionQueue: new MinecraftActionQueue(),
-          role: 'lumberjack',
         });
       },
     });
@@ -381,7 +368,6 @@ describe('Minecraft MCP server', () => {
                 bot: fakeBot(),
                 planStore: new PlanStore(),
                 actionQueue: new MinecraftActionQueue(),
-                role: 'lumberjack',
               })
           : null;
       },
@@ -412,7 +398,6 @@ describe('Minecraft MCP server', () => {
           bot: fakeBot(),
           planStore: new PlanStore(),
           actionQueue: new MinecraftActionQueue(),
-          role: 'lumberjack',
         });
       },
     });

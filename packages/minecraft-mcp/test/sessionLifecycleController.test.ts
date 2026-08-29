@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { WorldObservation } from '../src/botPort.js';
-import { SessionMirrorController } from '../src/sessionMirrorController.js';
+import type { MinecraftBotPort, WorldObservation } from '../src/botPort.js';
+import { SessionLifecycleController } from '../src/sessionLifecycleController.js';
 import type { TrueForgeSessionPort, TurnSnapshot } from '../src/trueforgePort.js';
 
 const observation: WorldObservation = {
@@ -18,7 +18,7 @@ const observation: WorldObservation = {
   nearbyEntities: [],
 };
 
-function fakeBot() {
+function fakeBot(): MinecraftBotPort {
   return {
     start: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
@@ -28,19 +28,17 @@ function fakeBot() {
     locateNaturalTrees: () => [],
     locateAnimals: () => [],
     moveTo: vi.fn(async () => undefined),
-    gather: vi.fn(async ({ count }: { count: number }) => ({ requested: count, completed: count, details: [] })),
-    harvestTrees: vi.fn(async ({ count }: { count: number }) => ({ requested: count, completed: count, details: [] })),
-    huntAnimals: vi.fn(async ({ count }: { count: number }) => ({ requested: count, completed: count, details: [] })),
-    craft: vi.fn(async ({ count }: { count: number }) => ({ requested: count, completed: count, details: [] })),
-    executeBlueprint: vi.fn(async ({ blocks }: { blocks: unknown[] }) => ({
+    gather: vi.fn(async ({ count }) => ({ requested: count, completed: count, details: [] })),
+    harvestTrees: vi.fn(async ({ count }) => ({ requested: count, completed: count, details: [] })),
+    huntAnimals: vi.fn(async ({ count }) => ({ requested: count, completed: count, details: [] })),
+    craft: vi.fn(async ({ count }) => ({ requested: count, completed: count, details: [] })),
+    executeBlueprint: vi.fn(async ({ blocks }) => ({
       requested: blocks.length,
       completed: blocks.length,
       details: [],
     })),
-    drop: vi.fn(async ({ count }: { count: number }) => ({ requested: count, completed: count, details: [] })),
+    drop: vi.fn(async ({ count }) => ({ requested: count, completed: count, details: [] })),
     stop: vi.fn(),
-    say: vi.fn(async () => undefined),
-    onChat: () => () => undefined,
   };
 }
 
@@ -48,17 +46,17 @@ function fakeSession(latestTurn: () => Promise<TurnSnapshot | null>): TrueForgeS
   return {
     latestTurn,
     createUserTurn: async () => {
-      throw new Error('The output-only controller must not create turns.');
+      throw new Error('The lifecycle controller must not create turns.');
     },
     cancelActiveTurn: async () => undefined,
   };
 }
 
-describe('TrueForge session mirror', () => {
-  it('mirrors a new completed response once without accepting Minecraft chat turns', async () => {
+describe('TrueForge session lifecycle', () => {
+  it('keeps completed console output out of Minecraft chat', async () => {
     const bot = fakeBot();
     let latest: TurnSnapshot | null = null;
-    const controller = new SessionMirrorController(
+    const controller = new SessionLifecycleController(
       bot,
       fakeSession(async () => latest),
       vi.fn(),
@@ -73,10 +71,8 @@ describe('TrueForge session mirror', () => {
     };
 
     await controller.tick();
-    await controller.tick();
 
-    expect(bot.say).toHaveBeenCalledTimes(1);
-    expect(bot.say).toHaveBeenCalledWith('I finished harvesting the tree.');
+    expect(bot.stop).not.toHaveBeenCalled();
     await controller.close();
   });
 
@@ -89,7 +85,7 @@ describe('TrueForge session mirror', () => {
       responseText: null,
     };
     const onTurnCancelled = vi.fn();
-    const controller = new SessionMirrorController(
+    const controller = new SessionLifecycleController(
       bot,
       fakeSession(async () => cancelled),
       onTurnCancelled,

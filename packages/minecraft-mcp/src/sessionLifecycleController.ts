@@ -5,10 +5,9 @@ function isTerminalFailure(turn: TurnSnapshot): boolean {
   return turn.status === 'cancelled' || turn.status === 'error';
 }
 
-export class SessionMirrorController {
+export class SessionLifecycleController {
   private pollingHandle: NodeJS.Timeout | null = null;
   private polling = false;
-  private mirroredTurnId: string | null = null;
   private handledTerminalTurnId: string | null = null;
 
   constructor(
@@ -18,10 +17,9 @@ export class SessionMirrorController {
     private readonly pollIntervalMs = 1_000,
   ) {}
 
-  async start(): Promise<void> {
-    const initialTurn = await this.trueforge.latestTurn();
-    this.mirroredTurnId = initialTurn?.status === 'running' ? null : (initialTurn?.id ?? null);
+  start(): Promise<void> {
     this.pollingHandle = setInterval(() => void this.tick(), this.pollIntervalMs);
+    return Promise.resolve();
   }
 
   close(): Promise<void> {
@@ -39,25 +37,13 @@ export class SessionMirrorController {
     this.polling = true;
     try {
       const latest = await this.trueforge.latestTurn();
-      if (latest === null) {
-        return;
-      }
-      if (isTerminalFailure(latest) && this.handledTerminalTurnId !== latest.id) {
+      if (latest !== null && isTerminalFailure(latest) && this.handledTerminalTurnId !== latest.id) {
         this.handledTerminalTurnId = latest.id;
         this.bot.stop();
         this.onTurnCancelled();
       }
-      if (
-        latest.status === 'done' &&
-        !latest.hasRequiredActions &&
-        latest.responseText !== null &&
-        this.mirroredTurnId !== latest.id
-      ) {
-        await this.bot.say(latest.responseText);
-        this.mirroredTurnId = latest.id;
-      }
     } catch (caught) {
-      console.warn('Minecraft session mirror tick failed', caught);
+      console.warn('Minecraft session lifecycle poll failed', caught);
     } finally {
       this.polling = false;
     }

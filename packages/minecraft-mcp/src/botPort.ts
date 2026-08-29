@@ -99,6 +99,4 @@ export interface MinecraftBotPort {
     assertAuthorized: () => void;
   }): Promise<ActionProgress>;
   stop(): void;
-  say(message: string): Promise<void>;
-  onChat(listener: (event: { username: string; message: string }) => void): () => void;
 }

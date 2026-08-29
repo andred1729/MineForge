@@ -21,11 +21,4 @@ final class BotIdentityTest {
     assertTrue(BotIdentity.parse("ForgeBot6").isEmpty());
     assertTrue(BotIdentity.parse("not-a-bot").isEmpty());
   }
-
-  @Test
-  void acceptsTheDemoLumberjackCommandSpelling() {
-    assertEquals(BotRole.LUMBERJACK, BotRole.parseCommand("lumber-jack").orElseThrow());
-    assertEquals(BotRole.LUMBERJACK, BotRole.parseCommand("lumberjack").orElseThrow());
-    assertEquals(BotRole.HUNTER, BotRole.parseCommand("HUNTER").orElseThrow());
-  }
 }

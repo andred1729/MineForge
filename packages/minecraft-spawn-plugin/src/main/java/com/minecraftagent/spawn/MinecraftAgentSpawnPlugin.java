@@ -5,7 +5,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.EnumSet;
-import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -73,13 +72,8 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
       sender.sendMessage("Only an in-game player can choose a ForgeBot spawn location.");
       return true;
     }
-    if (arguments.length != 1) {
-      requester.sendMessage("Usage: /spawn <lumber-jack|miner|builder|hunter|scout>");
-      return true;
-    }
-    Optional<BotRole> requestedRole = BotRole.parseCommand(arguments[0]);
-    if (requestedRole.isEmpty()) {
-      requester.sendMessage("Unknown role. Choose lumber-jack, miner, builder, hunter, or scout.");
+    if (arguments.length != 0) {
+      requester.sendMessage("Usage: /spawn");
       return true;
     }
     if (requester.getWorld().getEnvironment() != World.Environment.NORMAL) {
@@ -94,7 +88,6 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
     Location requestedLocation = requester.getLocation().clone();
     SpawnControlRequest request =
         new SpawnControlRequest(
-            requestedRole.get(),
             requester.getUniqueId(),
             requester.getName(),
             requester.getWorld().getUID(),
@@ -105,7 +98,7 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
             requestedLocation.getYaw(),
             requestedLocation.getPitch());
 
-    requester.sendMessage("Requesting the " + requestedRole.get().displayName() + " from TrueForge...");
+    requester.sendMessage("Requesting a ForgeBot from TrueForge...");
     httpClient
         .sendAsync(
             request.toHttpRequest(spawnEndpoint, spawnToken),
@@ -116,28 +109,12 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
                     .runTask(
                         this,
                         () ->
-                            finishSpawn(
-                                requester.getUniqueId(),
-                                requestedRole.get(),
-                                requestedLocation,
-                                response,
-                                failure)));
+                            finishSpawn(requester.getUniqueId(), requestedLocation, response, failure)));
     return true;
-  }
-
-  @Override
-  public java.util.List<String> onTabComplete(
-      CommandSender sender, Command command, String alias, String[] arguments) {
-    if (arguments.length != 1) {
-      return java.util.List.of();
-    }
-    String prefix = arguments[0].toLowerCase(Locale.ROOT);
-    return BotRole.commandNames().stream().filter(role -> role.startsWith(prefix)).toList();
   }
 
   private void finishSpawn(
       UUID requesterUuid,
-      BotRole requestedRole,
       Location requestedLocation,
       HttpResponse<String> response,
       Throwable failure) {
@@ -172,10 +149,6 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
       return;
     }
     BotIdentity identity = parsed.get();
-    if (identity.role() != requestedRole) {
-      rollback(identity, requester, "did not match the requested " + requestedRole.displayName() + " role");
-      return;
-    }
     Player bot = Bukkit.getPlayerExact(identity.username());
     if (bot == null) {
       rollback(identity, requester, "did not join Minecraft");
@@ -203,10 +176,7 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
     spawnInFlight.set(false);
     tell(
         requester,
-        identity.username()
-            + " spawned nearby as the "
-            + identity.role().displayName()
-            + ". Open its TrueForge session to assign work.");
+        "Go to the TrueForge console to assign work to " + identity.username() + ".");
     notifyReady(identity, requester);
   }
 
@@ -319,21 +289,19 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
 
   private void giveStartingKit(Player bot, BotRole role) {
     bot.getInventory().clear();
+    add(bot, Material.STONE_AXE, 1);
+    add(bot, Material.IRON_PICKAXE, 1);
+    add(bot, Material.IRON_SWORD, 1);
+    add(bot, Material.BAKED_POTATO, 16);
     switch (role) {
       case LUMBERJACK -> {
-        add(bot, Material.STONE_AXE, 1);
         add(bot, Material.OAK_SAPLING, 8);
-        add(bot, Material.BAKED_POTATO, 16);
       }
       case MINER -> {
-        add(bot, Material.IRON_PICKAXE, 1);
         add(bot, Material.TORCH, 64);
         add(bot, Material.LADDER, 32);
-        add(bot, Material.BAKED_POTATO, 16);
       }
       case BUILDER -> {
-        add(bot, Material.IRON_AXE, 1);
-        add(bot, Material.IRON_PICKAXE, 1);
         add(bot, Material.OAK_PLANKS, 256);
         add(bot, Material.COBBLESTONE, 128);
         add(bot, Material.GLASS_PANE, 64);
@@ -341,14 +309,11 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
         add(bot, Material.TORCH, 32);
       }
       case HUNTER -> {
-        add(bot, Material.IRON_SWORD, 1);
         add(bot, Material.SHIELD, 1);
-        add(bot, Material.BAKED_POTATO, 16);
       }
       case SCOUT -> {
         add(bot, Material.COMPASS, 1);
         add(bot, Material.SPYGLASS, 1);
-        add(bot, Material.BAKED_POTATO, 16);
       }
     }
   }

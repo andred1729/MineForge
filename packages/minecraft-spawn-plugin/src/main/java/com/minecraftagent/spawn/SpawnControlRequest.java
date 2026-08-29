@@ -11,7 +11,6 @@ import java.util.StringJoiner;
 import java.util.UUID;
 
 record SpawnControlRequest(
-    BotRole role,
     UUID requesterUuid,
     String requesterName,
     UUID worldUuid,
@@ -34,7 +33,6 @@ record SpawnControlRequest(
 
   String toFormBody() {
     Map<String, String> values = new LinkedHashMap<>();
-    values.put("role", role.wireName());
     values.put("requester_uuid", requesterUuid.toString());
     values.put("requester_name", requesterName);
     values.put("world_uuid", worldUuid.toString());

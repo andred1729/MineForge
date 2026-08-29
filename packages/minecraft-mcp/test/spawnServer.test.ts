@@ -4,7 +4,6 @@ import { startSpawnServer } from '../src/spawnServer.js';
 import { WorkforceCapacityError } from '../src/workforceManager.js';
 
 const FORM = new URLSearchParams({
-  role: 'lumberjack',
   requester_name: 'DemoPlayer',
   requester_uuid: '123e4567-e89b-12d3-a456-426614174000',
   world_name: 'world',

@@ -1,6 +1,6 @@
 # Minecraft `/spawn` Paper plugin
 
-This server-only Paper plugin turns `/spawn <role>` into a request for the local Minecraft bot manager. Supported commands are `/spawn lumber-jack`, `/spawn miner`, `/spawn builder`, `/spawn hunter`, and `/spawn scout`. No client mod is required.
+This server-only Paper plugin turns `/spawn` into a request for the local Minecraft bot manager. Internal roles are deliberately not part of the player-facing command. No client mod is required.
 
 ## Spawn control contract
 
@@ -13,7 +13,6 @@ X-Minecraft-Agent-Token: <MINECRAFT_SPAWN_TOKEN>
 The body uses `application/x-www-form-urlencoded` and contains:
 
 ```text
-role
 requester_uuid
 requester_name
 world_uuid
@@ -25,10 +24,10 @@ yaw
 pitch
 ```
 
-The host bot manager is authoritative for identity allocation. Each role has a stable identity: Lumberjack is `ForgeBot1`, Miner is `ForgeBot2`, Builder is `ForgeBot3`, Hunter is `ForgeBot4`, and Scout is `ForgeBot5`. The manager creates that bot's TrueForge connector, agent, and session, waits for the bot to join, and then returns:
+The host bot manager is authoritative for sequential identity and internal role allocation. It creates that bot's TrueForge connector, agent, and session, waits for the bot to join, and then returns:
 
 - `201 text/plain` with exactly `ForgeBotN` on success.
-- `409` when the selected role is already active or workforce capacity is reached.
+- `409` when five bots are already active.
 - Another non-2xx status when creation fails; it must release any reservation and disconnect partial bot state.
 
 The plugin performs the HTTP call off the Paper main thread. After success it returns to the main thread, finds safe natural ground near the request coordinates, teleports the bot, grants its role-specific demo kit, and applies the classic skin through SkinsRestorer.
