@@ -175,6 +175,58 @@ describe('Mineflayer navigation completion', () => {
 });
 
 describe('Mineflayer tree-drop collection', () => {
+  it('approaches a spawned item instead of requiring the mined block coordinate', async () => {
+    const subject = new MineflayerBot({
+      host: '127.0.0.1',
+      port: 25565,
+      username: 'ForgeBot1',
+      version: '1.21.4',
+    });
+    let inventoryCount = 0;
+    const droppedItem = { name: 'item', position: new Vec3(-41, 63, -8) };
+    const fakeMineflayer = {
+      inventory: { count: () => inventoryCount },
+      nearestEntity: (predicate: (entity: typeof droppedItem) => boolean) =>
+        predicate(droppedItem) ? droppedItem : null,
+    };
+    (subject as unknown as { bot: unknown }).bot = fakeMineflayer;
+    const moveTo = vi.spyOn(subject, 'moveTo').mockImplementation(async () => {
+      inventoryCount = 1;
+    });
+    const plan: Plan = {
+      id: 'plan',
+      summary: 'Collect a log',
+      steps: ['Collect'],
+      permittedActions: ['gather'],
+      origin: { x: -46, y: 66, z: -6 },
+      additionalOrigins: [],
+      radiusBlocks: 32,
+      createdAt: 0,
+      expiresAt: Number.MAX_SAFE_INTEGER,
+    };
+    const internals = subject as unknown as {
+      collectDrops(input: {
+        target: Position;
+        itemTypeId: number;
+        previousCount: number;
+        plan: Plan;
+        signal: AbortSignal;
+        assertAuthorized: () => void;
+      }): Promise<void>;
+    };
+
+    await internals.collectDrops({
+      target: { x: -42, y: 64, z: -8 },
+      itemTypeId: 17,
+      previousCount: 0,
+      plan,
+      signal: new AbortController().signal,
+      assertAuthorized: () => undefined,
+    });
+
+    expect(moveTo).toHaveBeenCalledWith(expect.objectContaining({ target: { x: -41, y: 63, z: -8 }, range: 1.5 }));
+  });
+
   it('collects at every mined log against the tree inventory baseline', async () => {
     const subject = new MineflayerBot({
       host: '127.0.0.1',

@@ -622,13 +622,12 @@ export class MineflayerBot implements MinecraftBotPort {
         );
         if (droppedItem !== null) {
           try {
-            await this.runBoundedPathfinder({
+            await this.moveTo({
+              target: integerPosition(droppedItem.position),
+              range: 1.5,
               plan,
               signal,
               assertAuthorized,
-              navigate: async () => {
-                await bot.pathfinder.goto(new goals.GoalFollow(droppedItem, 0));
-              },
             });
           } catch (caught) {
             if (bot.inventory.count(itemType.id, null) <= itemCountBeforeDig) {
@@ -1216,7 +1215,22 @@ export class MineflayerBot implements MinecraftBotPort {
     const bot = this.requireBot();
     await wait({ milliseconds: 200, signal });
     assertAuthorized();
-    await this.moveTo({ target, range: 1, plan, signal, assertAuthorized });
+    if (bot.inventory.count(itemTypeId, null) - previousCount < expectedIncrease) {
+      const droppedItem = bot.nearestEntity(
+        entity =>
+          entity.name === 'item' &&
+          entity.position.distanceTo(new Vec3(target.x, target.y, target.z)) <= 6 &&
+          isPositionWithinPlanBounds({ plan, position: integerPosition(entity.position) }),
+      );
+      const pickupTarget = droppedItem === null ? target : integerPosition(droppedItem.position);
+      await this.moveTo({
+        target: pickupTarget,
+        range: droppedItem === null ? 2 : 1.5,
+        plan,
+        signal,
+        assertAuthorized,
+      });
+    }
     const deadline = Date.now() + 3_500;
     while (bot.inventory.count(itemTypeId, null) - previousCount < expectedIncrease && Date.now() < deadline) {
       assertAuthorized();
