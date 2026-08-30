@@ -5,7 +5,7 @@ import { Vec3 } from 'vec3';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Plan, Position } from '../src/domain.js';
-import { MineflayerBot, runAbortable, runCreativeFlight, waitForBotSpawn } from '../src/mineflayerBot.js';
+import { MineflayerBot, navigateNear, runAbortable, runCreativeFlight, waitForBotSpawn } from '../src/mineflayerBot.js';
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolvePromise: () => void = () => {};
@@ -98,6 +98,28 @@ describe('Mineflayer cancellation', () => {
     vi.useRealTimers();
   });
 
+  it('keeps the bot hovering after an authorized build flight', async () => {
+    vi.useFakeTimers();
+    const stopFlying = vi.fn();
+    const fakeBot = {
+      creative: { startFlying: vi.fn(), stopFlying },
+      entity: { position: new Vec3(0, 100, 0), velocity: new Vec3(0, 0, 0) },
+      physics: { gravity: 0 },
+    } as unknown as Bot;
+    const flight = runCreativeFlight({
+      bot: fakeBot,
+      destination: new Vec3(0, 100, 0),
+      signal: new AbortController().signal,
+      assertAuthorized: () => {},
+      keepFlying: true,
+    });
+
+    await vi.advanceTimersByTimeAsync(50);
+    await expect(flight).resolves.toBeUndefined();
+    expect(stopFlying).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
   it('does not touch creative gravity when stopping a survival action', () => {
     const stopFlying = vi.fn();
     const fakeBot = {
@@ -112,6 +134,43 @@ describe('Mineflayer cancellation', () => {
     adapter.stop();
 
     expect(stopFlying).not.toHaveBeenCalled();
+  });
+});
+
+describe('Mineflayer navigation completion', () => {
+  it('settles movement when the live position enters the requested range', async () => {
+    const events = new EventEmitter();
+    let rejectNavigation: (reason: Error) => void = () => {};
+    const navigation = new Promise<void>((_resolve, reject) => {
+      rejectNavigation = reject;
+    });
+    const stop = vi.fn(() => {
+      rejectNavigation(new Error('Path was stopped'));
+    });
+    const fakeBot = Object.assign(events, {
+      entity: { position: new Vec3(-60, 66, -6) },
+      pathfinder: { goto: vi.fn(() => navigation), stop },
+    }) as unknown as Bot;
+
+    const movement = navigateNear({ bot: fakeBot, target: { x: -46, y: 66, z: -6 }, range: 2 });
+    fakeBot.entity.position = new Vec3(-47.5, 66, -6.5);
+    events.emit('physicsTick');
+
+    await expect(movement).resolves.toBeUndefined();
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it('does not start pathfinding when already within range', async () => {
+    const events = new EventEmitter();
+    const goto = vi.fn(async () => undefined);
+    const fakeBot = Object.assign(events, {
+      entity: { position: new Vec3(-47.5, 66, -6.5) },
+      pathfinder: { goto, stop: vi.fn() },
+    }) as unknown as Bot;
+
+    await navigateNear({ bot: fakeBot, target: { x: -46, y: 66, z: -6 }, range: 2 });
+
+    expect(goto).not.toHaveBeenCalled();
   });
 });
 

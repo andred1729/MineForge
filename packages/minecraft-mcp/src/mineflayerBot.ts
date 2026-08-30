@@ -151,13 +151,16 @@ export async function runCreativeFlight({
   destination,
   signal,
   assertAuthorized,
+  keepFlying = false,
 }: {
   bot: Bot;
   destination: Vec3;
   signal: AbortSignal;
   assertAuthorized: () => void;
+  keepFlying?: boolean;
 }): Promise<void> {
   bot.creative.startFlying();
+  let arrived = false;
   try {
     let vector = destination.minus(bot.entity.position);
     let magnitude = vectorMagnitude(vector);
@@ -176,8 +179,11 @@ export async function runCreativeFlight({
     assertAuthorized();
     bot.entity.position = destination;
     await abortablePause(signal, 50);
+    arrived = true;
   } finally {
-    bot.creative.stopFlying();
+    if (!arrived || !keepFlying) {
+      bot.creative.stopFlying();
+    }
   }
 }
 
@@ -246,6 +252,57 @@ export async function runAbortable<T>({
         signal.removeEventListener('abort', handleAbort);
       });
   });
+}
+
+function withinMoveRange(position: Vec3, target: Position, range: number): boolean {
+  const dx = position.x - target.x;
+  const dy = position.y - target.y;
+  const dz = position.z - target.z;
+  return dx * dx + dy * dy + dz * dz <= range * range;
+}
+
+export async function navigateNear({
+  bot,
+  target,
+  range,
+}: {
+  bot: Bot;
+  target: Position;
+  range: number;
+}): Promise<void> {
+  if (withinMoveRange(bot.entity.position, target, range)) {
+    return;
+  }
+
+  let resolveProximity: (() => void) | undefined;
+  const proximity = new Promise<void>(resolve => {
+    resolveProximity = resolve;
+  });
+  const checkProximity = () => {
+    if (withinMoveRange(bot.entity.position, target, range)) {
+      resolveProximity?.();
+    }
+  };
+  bot.on('physicsTick', checkProximity);
+  const navigation = bot.pathfinder.goto(new goals.GoalNear(target.x, target.y, target.z, range));
+  try {
+    const outcome = await Promise.race([
+      navigation.then(() => 'goal' as const),
+      proximity.then(() => 'proximity' as const),
+    ]);
+    if (outcome === 'proximity') {
+      bot.pathfinder.stop();
+      try {
+        await navigation;
+      } catch (caught) {
+        if (!withinMoveRange(bot.entity.position, target, range)) {
+          throw caught;
+        }
+      }
+    }
+  } finally {
+    bot.removeListener('physicsTick', checkProximity);
+  }
 }
 
 export class MineflayerBot implements MinecraftBotPort {
@@ -474,7 +531,7 @@ export class MineflayerBot implements MinecraftBotPort {
       signal,
       assertAuthorized,
       navigate: async () => {
-        await bot.pathfinder.goto(new goals.GoalNear(target.x, target.y, target.z, range));
+        await navigateNear({ bot, target, range });
       },
     });
   }
@@ -924,72 +981,79 @@ export class MineflayerBot implements MinecraftBotPort {
     let completed = 0;
     const details: string[] = [];
 
-    for (const operation of ordered) {
-      if (signal.aborted) {
-        throw abortError();
-      }
-      assertAuthorized();
-      const target = new Vec3(origin.x + operation.dx, origin.y + operation.dy, origin.z + operation.dz);
-      let existing = bot.blockAt(target);
-      if (existing?.name === operation.block || (operation.block === 'air' && existing?.name === 'air')) {
-        completed += 1;
-        continue;
-      }
-
-      await this.moveForBlueprintTarget({ target, plan, signal, assertAuthorized });
-      existing = bot.blockAt(target);
-      if (existing === null) {
-        throw new Error(`Target chunk is not loaded at ${target.toString()}.`);
-      }
-      if (existing.name === operation.block || (operation.block === 'air' && existing.name === 'air')) {
-        completed += 1;
-        continue;
-      }
-      if (operation.block === 'air') {
-        if (existing.name === 'air') {
+    try {
+      for (const operation of ordered) {
+        if (signal.aborted) {
+          throw abortError();
+        }
+        assertAuthorized();
+        const target = new Vec3(origin.x + operation.dx, origin.y + operation.dy, origin.z + operation.dz);
+        let existing = bot.blockAt(target);
+        if (existing?.name === operation.block || (operation.block === 'air' && existing?.name === 'air')) {
           completed += 1;
           continue;
         }
-        assertAuthorized();
-        await runAbortable({
-          signal,
-          operation: async () => {
-            await bot.dig(existing);
-          },
-          stop: () => {
-            bot.stopDigging();
-          },
-        });
-      } else {
-        const item = await this.ensureBlueprintItem({ blockName: operation.block, signal, assertAuthorized });
-        assertAuthorized();
-        await runAbortable({
-          signal,
-          operation: async () => {
-            await bot.equip(item, 'hand');
-          },
-          stop: () => {
-            // Mineflayer exposes no equip cancellation; serialization waits for it to settle.
-          },
-        });
-        const placement = this.findPlacementReference(target);
-        if (placement === null) {
-          throw new Error(`No supporting face is available to place ${operation.block} at ${target.toString()}.`);
+
+        await this.moveForBlueprintTarget({ target, plan, signal, assertAuthorized });
+        existing = bot.blockAt(target);
+        if (existing === null) {
+          throw new Error(`Target chunk is not loaded at ${target.toString()}.`);
         }
-        assertAuthorized();
-        await runAbortable({
-          signal,
-          operation: async () => {
-            await bot.placeBlock(placement.reference, placement.face);
-          },
-          stop: () => {
-            bot.clearControlStates();
-          },
-        });
-        await waitForBlockName({ bot, target, expected: operation.block, signal });
+        if (existing.name === operation.block || (operation.block === 'air' && existing.name === 'air')) {
+          completed += 1;
+          continue;
+        }
+        if (operation.block === 'air') {
+          if (existing.name === 'air') {
+            completed += 1;
+            continue;
+          }
+          assertAuthorized();
+          await runAbortable({
+            signal,
+            operation: async () => {
+              await bot.dig(existing);
+            },
+            stop: () => {
+              bot.stopDigging();
+            },
+          });
+        } else {
+          const item = await this.ensureBlueprintItem({ blockName: operation.block, signal, assertAuthorized });
+          assertAuthorized();
+          await runAbortable({
+            signal,
+            operation: async () => {
+              await bot.equip(item, 'hand');
+            },
+            stop: () => {
+              // Mineflayer exposes no equip cancellation; serialization waits for it to settle.
+            },
+          });
+          const placement = this.findPlacementReference(target);
+          if (placement === null) {
+            throw new Error(`No supporting face is available to place ${operation.block} at ${target.toString()}.`);
+          }
+          assertAuthorized();
+          await runAbortable({
+            signal,
+            operation: async () => {
+              await bot.placeBlock(placement.reference, placement.face);
+            },
+            stop: () => {
+              bot.clearControlStates();
+            },
+          });
+          await waitForBlockName({ bot, target, expected: operation.block, signal });
+        }
+        completed += 1;
+        details.push(`${operation.block} at ${target.toString()}`);
       }
-      completed += 1;
-      details.push(`${operation.block} at ${target.toString()}`);
+    } finally {
+      if (this.creativeFlightActive) {
+        bot.creative.stopFlying();
+        this.creativeFlightActive = false;
+      }
     }
 
     return { requested: blocks.length, completed, details };
@@ -1068,11 +1132,13 @@ export class MineflayerBot implements MinecraftBotPort {
       if (!isPositionWithinPlanBounds({ plan, position: integerPosition(waypoint) })) {
         throw new Error('Creative build flight would leave the approved plan radius.');
       }
-      this.creativeFlightActive = true;
       try {
-        await runCreativeFlight({ bot, destination: waypoint, signal, assertAuthorized });
-      } finally {
+        this.creativeFlightActive = true;
+        await runCreativeFlight({ bot, destination: waypoint, signal, assertAuthorized, keepFlying: true });
+      } catch (caught) {
+        bot.creative.stopFlying();
         this.creativeFlightActive = false;
+        throw caught;
       }
     }
   }
