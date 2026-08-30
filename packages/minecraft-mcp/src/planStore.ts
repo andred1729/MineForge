@@ -109,6 +109,14 @@ export class PlanStore {
     return 'pending';
   }
 
+  blueprintBatchCursor(planId: string): number {
+    const plan = this.require({ planId, action: 'build' });
+    if (plan.blueprint === undefined) {
+      throw new Error('The active approved plan is not bound to an imported blueprint.');
+    }
+    return this.nextBlueprintBatchIndex;
+  }
+
   completeBlueprintBatch({ planId, batchIndex }: { planId: string; batchIndex: number }): void {
     const status = this.blueprintBatchStatus({ planId, batchIndex });
     if (status === 'pending') {

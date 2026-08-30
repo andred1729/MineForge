@@ -351,11 +351,19 @@ describe('Mineflayer temporary scaffolding', () => {
       version: '1.21.4',
     });
     let chunkLoaded = false;
+    let moveAttempts = 0;
     const blockAt = vi.fn(() => (chunkLoaded ? ({ name: 'air' } as ReturnType<Bot['blockAt']>) : null));
     (subject as unknown as { bot: Bot }).bot = { blockAt } as unknown as Bot;
     const internals = subject as unknown as {
       rollbackTemporaryScaffolds(input: { positions: Vec3[]; plan: Plan }): Promise<void>;
+      moveForBlueprintTarget(): Promise<void>;
     };
+    const move = vi.spyOn(internals, 'moveForBlueprintTarget').mockImplementation(async () => {
+      moveAttempts += 1;
+      if (moveAttempts === 2) {
+        chunkLoaded = true;
+      }
+    });
     const scaffold = new Vec3(0, 64, 0);
 
     await expect(
@@ -365,8 +373,8 @@ describe('Mineflayer temporary scaffolding', () => {
       cause: expect.objectContaining({ message: expect.stringContaining('Scaffold chunk is not loaded') }),
     });
 
-    chunkLoaded = true;
     await internals.rollbackTemporaryScaffolds({ positions: [], plan: buildPlan });
+    expect(move).toHaveBeenCalledTimes(2);
     expect(blockAt).toHaveBeenCalledTimes(2);
   });
 });

@@ -82,5 +82,6 @@ describe('PlanStore', () => {
     store.completeBlueprintBatch({ planId: plan.id, batchIndex: 0 });
     expect(store.blueprintBatchStatus({ planId: plan.id, batchIndex: 0 })).toBe('completed');
     expect(store.blueprintBatchStatus({ planId: plan.id, batchIndex: 1 })).toBe('pending');
+    expect(store.blueprintBatchCursor(plan.id)).toBe(1);
   });
 });

@@ -598,6 +598,7 @@ export function createMinecraftMcpServer({
           validateBlueprint({ planStore, planId, origin: binding.origin, blocks: batch });
           const batchStatus = planStore.blueprintBatchStatus({ planId, batchIndex });
           if (batchStatus === 'completed') {
+            const nextBatchIndex = planStore.blueprintBatchCursor(planId);
             return {
               requested: batch.length,
               completed: batch.length,
@@ -606,7 +607,7 @@ export function createMinecraftMcpServer({
               digest,
               batch_index: batchIndex,
               batch_count: batchCount,
-              next_batch_index: batchIndex + 1 < batchCount ? batchIndex + 1 : null,
+              next_batch_index: nextBatchIndex < batchCount ? nextBatchIndex : null,
               worker_id: workerId,
               already_completed: true,
             };
