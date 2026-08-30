@@ -4,6 +4,11 @@ MineForge connects AI workers in a Minecraft world to TrueForge. TrueForge runs 
 
 Code is not the only thing agents / harness should be good at!
 
+<p align="center">
+  <img src="./packages/minecraft-mcp/docs/builder-agent-timelapse.gif" alt="Timelapse of the builder agent constructing a Minecraft blueprint" width="720">
+</p>
+<p align="center"><em>Builder agent controlled by TrueHarness mod</em></p>
+
 ## How it works
 
 ```mermaid
