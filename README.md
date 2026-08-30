@@ -1,114 +1,71 @@
-<p align="center">
-  <a href="https://trueforge.dev">
-    <picture>
-      <source srcset="./docs/assets/trueforge-black.svg" media="(prefers-color-scheme: light)">
-      <source srcset="./docs/assets/trueforge-white.svg" media="(prefers-color-scheme: dark)">
-      <img src="./docs/assets/trueforge-black.svg" alt="TrueForge logo">
-    </picture>
-  </a>
-</p>
-<p align="center">The open-source agent harness - the runtime layer that turns an LLM into a working agent</p>
+# MineForge: a TrueForge Harness Modification, reviewed by Qodo
 
-<p align="center">
-  <a href="https://trendshift.io/repositories/155463?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-155463" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/155463/weekly?language=TypeScript" alt="truefoundry%2Ftrueforge | Trendshift" width="250" height="55"/></a>
-</p>
+MineForge connects AI workers in a Minecraft world to TrueForge. TrueForge runs the intelligence and conversation; the bridge translates approved agent decisions into bounded Minecraft actions. In this project we essentially created a custom Minecraft MCP and wired it to the MineForge console and harness.
 
-<p align="center">
-  <a href="https://github.com/truefoundry/trueforge/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="License: MIT"></a>
-  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/Node.js-%3E%3D22.14-green.svg?style=flat-square" alt="Node.js >= 22.14"></a>
-  <a href="https://trueforge.dev"><img src="https://img.shields.io/badge/Documentation-trueforge.dev-blue.svg?style=flat-square" alt="Documentation"></a>
-  <a href="https://trueforge.dev/quickstart"><img src="https://img.shields.io/badge/Quickstart-trueforge.dev/quickstart-blue.svg?style=flat-square" alt="Quickstart"></a>
-  <a href="https://trueforge.dev/api/overview"><img src="https://img.shields.io/badge/SDK-trueforge.dev/api/overview-blue.svg?style=flat-square" alt="SDK"></a>
-</p>
-<p align="center">
-  <a href="https://www.npmjs.com/package/@truefoundry/trueforge"><img src="https://img.shields.io/npm/v/@truefoundry/trueforge?label=trueforge&logo=npm&style=flat-square" alt="npm @truefoundry/trueforge"></a>
-  <a href="https://www.npmjs.com/package/@truefoundry/trueforge-sdk"><img src="https://img.shields.io/npm/v/@truefoundry/trueforge-sdk?label=trueforge-sdk&logo=npm&style=flat-square" alt="npm @truefoundry/trueforge-sdk"></a>
-  <a href="https://www.npmjs.com/package/@truefoundry/trueforge-ui"><img src="https://img.shields.io/npm/v/@truefoundry/trueforge-ui?label=trueforge-ui&logo=npm&style=flat-square" alt="npm @truefoundry/trueforge-ui"></a>
-  <a href="https://www.npmjs.com/package/@truefoundry/trueforge-core"><img src="https://img.shields.io/npm/v/@truefoundry/trueforge-core?label=trueforge-core&logo=npm&style=flat-square" alt="npm @truefoundry/trueforge-core"></a>
-  <a href="https://tfy.jfrog.io/ui/packages/oci:%2F%2Ftrueforge"><img src="https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2Ftruefoundry%2Ftrueforge%2Frefs%2Fheads%2Fmain%2Fcharts%2Ftrueforge%2FChart.yaml&query=%24.version&label=trueforge&logo=helm&style=flat-square" alt="helm trueforge"></a>
-  <a href="https://deepwiki.com/truefoundry/trueforge"><img src="https://deepwiki.com/badge.svg?style=flat-square" alt="Ask DeepWiki"></a>
-</p>
+Code is not the only thing agents / harness should be good at!
 
-# TrueForge
+## How it works
 
-TrueForge runs the agent execution loop for you - model calls, MCP tools, skills, sandboxing, approvals, context management, and session state - and exposes it three ways: a **chat UI**, an **HTTP API** with a TypeScript **SDK**, and an embeddable **UI SDK**.
+```mermaid
+flowchart LR
+  Player["Minecraft player"] --> Paper["Paper server<br/>spawn plugin"]
+  Paper --> Bridge["Minecraft bridge<br/>workforce manager"]
+  Bridge <--> Bot["Mineflayer bot"]
+  Bot <--> Paper
 
-![TrueForge Chat UI](./docs/images/hero.png)
+  subgraph TrueForge["TrueForge Core"]
+    direction TB
+    UI["Web console"]
+    Runtime["Agent runtime<br/>model loop and tools"]
+    Sessions["Durable agents, sessions,<br/>turns, and history"]
+    Approval["Human approval<br/>and cancellation"]
+    Subagents["Subagent coordination"]
 
-## Why TrueForge?
+    UI <--> Runtime
+    Runtime <--> Sessions
+    Runtime <--> Approval
+    Runtime <--> Subagents
+  end
 
-Building an agent is easy. Running one well is not - you need streaming, session persistence, tool servers, sandboxing, approvals, and a UI. TrueForge gives you that out of the box:
-
-- **Initial setup from catalogs** - configure [models](https://trueforge.dev/models), [MCP servers](https://trueforge.dev/mcp-servers), [skills](https://trueforge.dev/skills), and a [sandbox](https://trueforge.dev/sandbox) once; agents pick from what you connected. Presets come from shipped YAML catalogs you can customize.
-- **Any model provider** - OpenAI, Anthropic, Google Gemini, and other catalog providers, or any OpenAI-compatible endpoint.
-- **MCP tools** - remote MCP servers with header auth or OAuth, including in-chat authorization.
-- **Skills** - git-backed `SKILL.md` instruction packs, loaded on demand in the sandbox.
-- **Sandbox as a tool** - isolated code/file execution (Daytona today; more providers planned), provisioned only when needed. Secrets stay in the harness.
-- **Human checkpoints** - tool approval, ask-user-questions, and Generative UI in chat.
-- **Context engineering** - subagents, deferred tool loading, Code Mode, large-result offloading, and compaction.
-- **Chat UI + SDK** - use the bundled UI, automate with `@truefoundry/trueforge-sdk`, or embed `@truefoundry/trueforge-ui`.
-
-It scales down and up: **local mode** (one process, SQLite) or **hosted mode** (Postgres + Redis, Docker Compose or Helm).
-
-## Getting started
-
-### Quickstart with `npx`
-
-```
-npx @truefoundry/trueforge@latest
+  Bridge -->|creates and restores workers| Sessions
+  Runtime -->|bot-scoped MCP tools| Bridge
+  Bot -->|player chat| Sessions
+  Runtime -->|progress and replies| Bot
 ```
 
-Use the [Quickstart](https://trueforge.dev/quickstart) guide to run TrueForge using various methods (Local, Docker Compose, or Kubernetes). Connect models, tools, skills and build your first reusable agent.
+_TrueForge remains the harness and interface._ It owns the model loop, agent instructions, durable sessions, conversation history, tool approval, cancellation, and subagent coordination. _The Minecraft bridge does not run a separate agent loop._
 
-To work on TrueForge from this repository, see [CONTRIBUTING.md](CONTRIBUTING.md).
+The bridge owns the physical workforce. Each worker has:
 
-## Architecture
+- one Mineflayer bot in Minecraft;
+- one TrueForge agent and durable session;
+- one private MCP route connected only to that bot;
+- one active plan boundary; and
+- one action queue that prevents overlapping world changes.
 
-<p align="center">
-  <picture>
-    <source srcset="./docs/assets/architecture-dark.svg" media="(prefers-color-scheme: dark)">
-    <source srcset="./docs/assets/architecture-light.svg" media="(prefers-color-scheme: light)">
-    <img src="./docs/assets/architecture-light.svg" alt="TrueForge architecture: Chat UI and SDK connect to the TrueForge server HTTP API and agent loop, which talks to SQLite or Postgres and bring-your-own models, MCP servers, and sandbox" width="920">
-  </picture>
-</p>
+When a player runs `/spawn X`, the Paper plugin asks the bridge for a neutral worker. The bridge connects the bot, provisions an empty TrueForge session, and records the relationship so it can be restored after a restart. Paper then places the bot on safe ground with the same neutral starting kit. The user's first console prompt determines whether it gathers wood, hunts for food, or builds from a blueprint.
 
-| Mode   | Best for                    | Storage  | Extra infra      | How to run                   |
-| ------ | --------------------------- | -------- | ---------------- | ---------------------------- |
-| Local  | Personal use, trying it out | SQLite   | None             | `npx @truefoundry/trueforge` |
-| Hosted | Teams, multi-replica        | Postgres | Postgres + Redis | Docker Compose or Helm       |
+TrueForge decides what each worker does from the user's console prompt, calls that worker's MCP tools, and sends progress or final replies back through Minecraft chat. Cancelling or failing a turn immediately stops the bot and invalidates its active plan.
 
-> **Local mode is for your machine only.** It is a convenient way to try TrueForge — not a production or internet-facing setup. There is no login by default, and data lives in a local SQLite file. Please keep it on localhost. We cannot take responsibility for data loss or unauthorized access if local mode is used beyond that. For a shared or production deployment, use hosted mode.
+## Safe world actions
 
-## Documentation
+World-changing work requires a human-approved plan. A plan limits which actions are allowed, how long authorization lasts, and how far the bot may travel or modify the world. Those limits are checked again while an action is running, not only when it begins.
 
-| Section                                                             | What you'll find                                                  |
-| ------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| [Introduction](https://trueforge.dev/introduction)                  | What an agent harness is and how TrueForge fits together          |
-| [Quickstart](https://trueforge.dev/quickstart)                      | Run local or hosted, build your first agent                       |
-| [Initial Setup](https://trueforge.dev/harness/initial-setup)        | Models, MCP, skills, sandbox - catalogs and overrides             |
-| [Create an Agent](https://trueforge.dev/create-agent/overview)      | Select resources; tool approval, questions, Generative UI         |
-| [Harness Capabilities](https://trueforge.dev/key-features/overview) | Sandbox-as-tool, subagents, deferred tools, Code Mode, compaction |
-| [Setup Login](https://trueforge.dev/authentication/overview)        | Optional OIDC for shared deployments                              |
-| [Benchmarking](https://trueforge.dev/benchmarking)                  | Cost/accuracy vs Claude Managed Agents and deepagents             |
-| [SDK](https://trueforge.dev/api/overview)                           | TypeScript client: sessions, turns, events                        |
-| [Chat UI](https://trueforge.dev/chat-ui)                            | Bundled UI and embedding `@truefoundry/trueforge-ui`              |
-| [API Reference](https://trueforge.dev/api-reference)                | OpenAPI paths and schemas                                         |
+The bridge exposes bounded observation, movement, gathering, crafting, and building behavior. It does not expose unrestricted server commands, explosives, hostile combat, or arbitrary world mutation.
 
-## Benchmarks
+## Building crews and blueprints
 
-We compare TrueForge against Claude Managed Agents and deepagents on the same tasks, tools, and model - same accuracy, lower cost. Reproduce it from [`benchmark/`](benchmark/). Write-up: [Benchmarking](https://trueforge.dev/benchmarking).
+A worker assigned a building task can import a supported GrabCraft design into a local blueprint catalog. The bridge validates and normalizes the design, removes unsupported blocks, calculates its material list, and gives the result an immutable digest.
 
-## Contributing
+Before construction, TrueForge separately asks for approval to enable creative mode, create visible helper bodies, and bind the build plan to the exact blueprint digest and location. TrueForge subagents coordinate the work, while the bridge routes deterministic batches to the lead bot or a helper.
 
-We love contributions - bug reports, features, and docs fixes. See [CONTRIBUTING.md](CONTRIBUTING.md) and our [Code of Conduct](CODE_OF_CONDUCT.md). Fork PRs should change source only; maintainers regenerate the SDK after merge.
+Every target block is checked against the approved plan and the live Minecraft world. Already-correct blocks are skipped, so an interrupted batch can be retried safely.
 
-To report a security vulnerability, follow [SECURITY.md](SECURITY.md) instead of opening a public issue.
+## Responsibilities
 
-## Talk to us
-
-- [Community Discord](https://discord.com/invite/fHeGRvakb)
-- Founder emails: [abhishek@truefoundry.com](mailto:abhishek@truefoundry.com) / [anuraag@truefoundry.com](mailto:anuraag@truefoundry.com)
-
-## License
-
-TrueForge is released under the [MIT License](LICENSE).
+| Component        | Responsibility                                                                          |
+| ---------------- | --------------------------------------------------------------------------------------- |
+| TrueForge        | Agent reasoning, sessions, approvals, cancellation, history, and subagents              |
+| Minecraft bridge | Bot lifecycle, MCP tools, plans, action queues, chat mirroring, and blueprint execution |
+| Paper plugin     | Player spawn requests, safe placement, starting kits, skins, and placement rollback     |
+| Minecraft server | Authoritative world state                                                               |
