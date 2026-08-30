@@ -3,9 +3,14 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 
 import { z } from 'zod';
 
+import { BotRoleSchema } from './botRoles.js';
 import { WorkforceCapacityError, type SpawnedBot } from './workforceManager.js';
 
 const SpawnRequestSchema = z.object({
+  role: BotRoleSchema.optional(),
+  // Kept during the branch transition so an already-running Paper plugin can
+  // still spawn a worker while the rebuilt plugin rolls out.
+  requested_role: BotRoleSchema.optional(),
   requester_name: z.string().regex(/^[A-Za-z0-9_]{1,16}$/),
   requester_uuid: z.uuid(),
   world_name: z.string().min(1).max(128),
@@ -18,7 +23,7 @@ const SpawnRequestSchema = z.object({
 });
 export type SpawnRequest = z.infer<typeof SpawnRequestSchema>;
 
-const RollbackRequestSchema = z.object({
+const BotLifecycleRequestSchema = z.object({
   username: z.string().regex(/^ForgeBot[1-5]$/),
 });
 
@@ -103,19 +108,24 @@ export function startSpawnServer({
   token,
   spawn,
   rollback,
+  ready,
 }: {
   host: string;
   port: number;
   token: string;
   spawn: (request: SpawnRequest) => Promise<SpawnedBot>;
   rollback: (username: string) => Promise<boolean>;
+  ready: (username: string) => Promise<boolean>;
 }) {
   const server = createServer((request, response) => {
     if (request.method === 'GET' && request.url === '/healthz') {
       writeJson(response, 200, { status: 'ok' });
       return;
     }
-    if (request.method !== 'POST' || (request.url !== '/spawn' && request.url !== '/spawn/rollback')) {
+    if (
+      request.method !== 'POST' ||
+      (request.url !== '/spawn' && request.url !== '/spawn/rollback' && request.url !== '/spawn/ready')
+    ) {
       writeJson(response, 404, { error: 'Not found.' });
       return;
     }
@@ -126,22 +136,28 @@ export function startSpawnServer({
     void (async () => {
       try {
         const form = await readForm(request);
-        if (request.url === '/spawn/rollback') {
-          const input = RollbackRequestSchema.parse(form);
-          const rolledBack = await rollback(input.username);
-          writeText(response, rolledBack ? 204 : 409, '');
+        if (request.url === '/spawn/rollback' || request.url === '/spawn/ready') {
+          const input = BotLifecycleRequestSchema.parse(form);
+          const completed =
+            request.url === '/spawn/rollback' ? await rollback(input.username) : await ready(input.username);
+          writeText(response, completed ? 204 : 409, '');
           return;
         }
         const input = SpawnRequestSchema.parse(form);
-        console.log(`Minecraft /spawn requested by ${input.requester_name} in ${input.world_name}.`);
+        const role = input.role ?? input.requested_role;
+        console.log(
+          `Minecraft /spawn${role === undefined ? '' : ` ${role}`} requested by ${input.requester_name} in ${input.world_name}.`,
+        );
         const bot = await spawn(input);
-        writeText(response, 201, bot.username);
+        const legacyResponse = input.requested_role !== undefined && input.role === undefined;
+        writeText(response, 201, legacyResponse ? bot.username : `${bot.username}:${bot.role}`);
       } catch (caught) {
         if (caught instanceof WorkforceCapacityError) {
           writeText(response, 409, caught.message);
           return;
         }
         if (caught instanceof z.ZodError) {
+          console.warn('Rejected Minecraft spawn request', caught.issues);
           writeText(response, 400, 'Invalid spawn request.');
           return;
         }

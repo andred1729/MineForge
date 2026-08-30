@@ -13,18 +13,20 @@ const FORM = new URLSearchParams({
   z: '-2.5',
   yaw: '90',
   pitch: '0',
+  requested_role: 'builder',
 });
 
 describe('Minecraft spawn ingress', () => {
   it('requires the shared token and accepts the Paper plugin form contract', async () => {
-    const requests: string[] = [];
+    const requests: Array<{ requester: string; role: string }> = [];
     const server = startSpawnServer({
       host: '127.0.0.1',
       port: 0,
       token: 'test-token-at-least-16-characters',
       rollback: async () => false,
+      ready: async () => false,
       spawn: async request => {
-        requests.push(request.requester_name);
+        requests.push({ requester: request.requester_name, role: request.requested_role ?? request.role ?? 'missing' });
         return {
           username: 'ForgeBot1',
           role: 'lumberjack',
@@ -47,7 +49,51 @@ describe('Minecraft spawn ingress', () => {
       });
       expect(accepted.status).toBe(201);
       expect(await accepted.text()).toBe('ForgeBot1');
-      expect(requests).toEqual(['DemoPlayer']);
+      expect(requests).toEqual([{ requester: 'DemoPlayer', role: 'builder' }]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('returns a generalist identity for a neutral spawn and acknowledges Paper placement readiness', async () => {
+    const ready: string[] = [];
+    const server = startSpawnServer({
+      host: '127.0.0.1',
+      port: 0,
+      token: 'test-token-at-least-16-characters',
+      rollback: async () => false,
+      ready: async username => {
+        ready.push(username);
+        return true;
+      },
+      spawn: async () => ({
+        username: 'ForgeBot3',
+        role: 'generalist',
+        agentName: 'forgebot3-generalist',
+        sessionId: 'session-3',
+        consoleUrl: 'http://127.0.0.1:8790/sessions/session-3',
+      }),
+    });
+    await server.listen();
+    try {
+      const rebuiltForm = new URLSearchParams(FORM);
+      rebuiltForm.delete('requested_role');
+      const headers = { 'x-minecraft-agent-token': 'test-token-at-least-16-characters' };
+      const spawned = await fetch(`http://127.0.0.1:${String(server.port())}/spawn`, {
+        method: 'POST',
+        headers,
+        body: rebuiltForm,
+      });
+      expect(spawned.status).toBe(201);
+      expect(await spawned.text()).toBe('ForgeBot3:generalist');
+
+      const initialized = await fetch(`http://127.0.0.1:${String(server.port())}/spawn/ready`, {
+        method: 'POST',
+        headers,
+        body: new URLSearchParams({ username: 'ForgeBot3' }),
+      });
+      expect(initialized.status).toBe(204);
+      expect(ready).toEqual(['ForgeBot3']);
     } finally {
       await server.close();
     }
@@ -59,6 +105,7 @@ describe('Minecraft spawn ingress', () => {
       port: 0,
       token: 'test-token-at-least-16-characters',
       rollback: async () => false,
+      ready: async () => false,
       spawn: async () => {
         throw new WorkforceCapacityError('Five bots are already active.');
       },
@@ -90,6 +137,7 @@ describe('Minecraft spawn ingress', () => {
         rolledBack.push(username);
         return true;
       },
+      ready: async () => false,
     });
     await server.listen();
     try {

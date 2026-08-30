@@ -39,11 +39,11 @@ describe('PlanStore', () => {
     expect(store.current()).toBeNull();
   });
 
-  it('authorizes a bounded corridor to a configured demo worksite', () => {
+  it('authorizes a bounded corridor to a known tree location', () => {
     const store = new PlanStore();
     const plan = store.begin({
       input: {
-        summary: 'Harvest at the lumber worksite',
+        summary: 'Harvest near the known trees',
         steps: ['Travel', 'Harvest'],
         permitted_actions: ['move', 'gather'],
         duration_minutes: 15,

@@ -1,14 +1,21 @@
-import { once } from 'node:events';
 import { createServer } from 'node:net';
 
 import mineflayer, { type Bot } from 'mineflayer';
 import pathfinderPlugin from 'mineflayer-pathfinder';
+import prismarineItem from 'prismarine-item';
 import prismarineViewer from 'prismarine-viewer';
 import { Vec3 } from 'vec3';
 
 import type { ActionProgress, MinecraftBotPort, NearbyBlock, NearbyEntity, WorldObservation } from './botPort.js';
 import { splitChatMessage } from './chat.js';
 import type { BlueprintBlock, Plan, Position } from './domain.js';
+import {
+  isVerifiedAnimalDrop,
+  selectHuntableAnimals,
+  type HuntableAnimal,
+  type HuntCandidate,
+  type HuntSpecies,
+} from './hunting.js';
 import { calculateNewItemCount, waitForItemCountAtLeast } from './inventory.js';
 import { isPositionWithinPlanBounds } from './planStore.js';
 import { findNaturalTrees, type NaturalTree, type TreeWorld } from './treeHarvest.js';
@@ -22,6 +29,8 @@ interface MineflayerBotOptions {
 
 const { goals, Movements, pathfinder } = pathfinderPlugin;
 const { mineflayer: startMineflayerViewer } = prismarineViewer;
+const BOT_SPAWN_TIMEOUT_MS = 15_000;
+const CONNECTION_THROTTLE_BACKOFF_MS = 5_000;
 
 function integerPosition(position: Vec3): Position {
   return {
@@ -33,6 +42,64 @@ function integerPosition(position: Vec3): Position {
 
 function abortError(): Error {
   return new Error('Minecraft action was cancelled.');
+}
+
+export async function waitForBotSpawn(bot: Bot, username: string, timeoutMs = BOT_SPAWN_TIMEOUT_MS): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timeout);
+      bot.removeListener('spawn', handleSpawn);
+      bot.removeListener('error', handleError);
+      bot.removeListener('kicked', handleKicked);
+      bot.removeListener('end', handleEnd);
+    };
+    const finish = (error?: Error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      if (error === undefined) {
+        resolve();
+      } else {
+        reject(error);
+      }
+    };
+    const handleSpawn = () => {
+      finish();
+    };
+    const handleError = (error: Error) => {
+      finish(error);
+    };
+    const handleKicked = (reason: unknown) => {
+      finish(new Error(`${username} was kicked before spawning: ${String(reason)}`));
+    };
+    const handleEnd = (reason: string) => {
+      finish(new Error(`${username} disconnected before spawning: ${reason}`));
+    };
+    const timeout = setTimeout(() => {
+      finish(new Error(`${username} did not spawn within ${String(timeoutMs / 1_000)} seconds.`));
+    }, timeoutMs);
+    bot.once('spawn', handleSpawn);
+    bot.once('error', handleError);
+    bot.once('kicked', handleKicked);
+    bot.once('end', handleEnd);
+  });
+}
+
+function isConnectionThrottled(caught: unknown): boolean {
+  return caught instanceof Error && caught.message.toLowerCase().includes('connection throttled');
+}
+
+function assertNotAborted(signal: AbortSignal): void {
+  if (signal.aborted) {
+    throw abortError();
+  }
+}
+
+function hasAttachedVehicle(entity: { vehicle?: unknown }): boolean {
+  return entity.vehicle !== null && entity.vehicle !== undefined;
 }
 
 export async function isTcpPortAvailable(port: number): Promise<boolean> {
@@ -51,23 +118,91 @@ export async function isTcpPortAvailable(port: number): Promise<boolean> {
 }
 
 async function wait({ milliseconds, signal }: { milliseconds: number; signal: AbortSignal }): Promise<void> {
+  await abortablePause(signal, milliseconds);
+}
+
+function vectorMagnitude(vector: Vec3): number {
+  return Math.sqrt(vector.x * vector.x + vector.y * vector.y + vector.z * vector.z);
+}
+
+async function abortablePause(signal: AbortSignal, milliseconds: number): Promise<void> {
   if (signal.aborted) {
     throw abortError();
   }
   await new Promise<void>((resolve, reject) => {
-    const handleAbort = () => {
-      clearTimeout(timeout);
-      reject(abortError());
-    };
     const timeout = setTimeout(() => {
       signal.removeEventListener('abort', handleAbort);
       resolve();
     }, milliseconds);
+    const handleAbort = () => {
+      clearTimeout(timeout);
+      signal.removeEventListener('abort', handleAbort);
+      reject(abortError());
+    };
     signal.addEventListener('abort', handleAbort, { once: true });
     if (signal.aborted) {
       handleAbort();
     }
   });
+}
+
+export async function runCreativeFlight({
+  bot,
+  destination,
+  signal,
+  assertAuthorized,
+}: {
+  bot: Bot;
+  destination: Vec3;
+  signal: AbortSignal;
+  assertAuthorized: () => void;
+}): Promise<void> {
+  bot.creative.startFlying();
+  try {
+    let vector = destination.minus(bot.entity.position);
+    let magnitude = vectorMagnitude(vector);
+    while (magnitude > 0.5) {
+      if (signal.aborted) {
+        throw abortError();
+      }
+      assertAuthorized();
+      bot.physics.gravity = 0;
+      bot.entity.velocity = new Vec3(0, 0, 0);
+      bot.entity.position.add(vector.scaled(0.5 / magnitude));
+      await abortablePause(signal, 50);
+      vector = destination.minus(bot.entity.position);
+      magnitude = vectorMagnitude(vector);
+    }
+    assertAuthorized();
+    bot.entity.position = destination;
+    await abortablePause(signal, 50);
+  } finally {
+    bot.creative.stopFlying();
+  }
+}
+
+async function waitForBlockName({
+  bot,
+  target,
+  expected,
+  signal,
+}: {
+  bot: Bot;
+  target: Vec3;
+  expected: string;
+  signal: AbortSignal;
+}): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    if (signal.aborted) {
+      throw abortError();
+    }
+    if (bot.blockAt(target)?.name === expected) {
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  throw new Error(`Minecraft did not confirm ${expected} at ${target.toString()}.`);
 }
 
 export async function runAbortable<T>({
@@ -115,6 +250,7 @@ export async function runAbortable<T>({
 
 export class MineflayerBot implements MinecraftBotPort {
   private bot: Bot | null = null;
+  private creativeFlightActive = false;
   private readonly chatListeners = new Set<(event: { username: string; message: string }) => void>();
 
   constructor(private readonly options: MineflayerBotOptions) {}
@@ -124,43 +260,51 @@ export class MineflayerBot implements MinecraftBotPort {
       return;
     }
 
-    const bot = mineflayer.createBot({
-      host: this.options.host,
-      port: this.options.port,
-      username: this.options.username,
-      auth: 'offline',
-      version: this.options.version,
-    });
-    bot.loadPlugin(pathfinder);
-    bot.on('chat', (username, message) => {
-      for (const listener of this.chatListeners) {
-        listener({ username, message });
-      }
-    });
-    this.bot = bot;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const bot = mineflayer.createBot({
+        host: this.options.host,
+        port: this.options.port,
+        username: this.options.username,
+        auth: 'offline',
+        version: this.options.version,
+      });
+      bot.loadPlugin(pathfinder);
+      bot.on('chat', (username, message) => {
+        for (const listener of this.chatListeners) {
+          listener({ username, message });
+        }
+      });
+      bot.on('error', error => {
+        console.warn(`${this.options.username} Minecraft connection error`, error);
+      });
+      this.bot = bot;
 
-    try {
-      await Promise.race([
-        once(bot, 'spawn'),
-        once(bot, 'error').then(([error]) => {
-          if (error instanceof Error) {
-            throw error;
-          }
-          throw new Error('Mineflayer failed before spawning.');
-        }),
-      ]);
-      const movements = new Movements(bot);
-      // Pathfinding is navigation only. World mutation must happen through the
-      // explicitly authorized gather/build loops so it can be counted and stopped.
-      movements.canDig = false;
-      movements.allow1by1towers = false;
-      movements.scafoldingBlocks = [];
-      bot.pathfinder.setMovements(movements);
-    } catch (caught) {
-      this.bot = null;
-      bot.end('Connection failed');
-      throw new Error('Could not connect ForgeBot to Minecraft.', { cause: caught });
+      try {
+        await waitForBotSpawn(bot, this.options.username);
+        const movements = new Movements(bot);
+        // Pathfinding is navigation only. World mutation must happen through the
+        // explicitly authorized gather/build loops so it can be counted and stopped.
+        movements.canDig = false;
+        movements.allow1by1towers = false;
+        movements.scafoldingBlocks = [];
+        bot.pathfinder.setMovements(movements);
+        return;
+      } catch (caught) {
+        lastError = caught;
+        this.bot = null;
+        bot.end('Connection failed');
+        if (attempt < 2 && isConnectionThrottled(caught)) {
+          console.warn(`${this.options.username} was connection-throttled; retrying in 5 seconds.`);
+          await new Promise<void>(resolve => {
+            setTimeout(resolve, CONNECTION_THROTTLE_BACKOFF_MS);
+          });
+          continue;
+        }
+        break;
+      }
     }
+    throw new Error('Could not connect ForgeBot to Minecraft.', { cause: lastError });
   }
 
   close(): Promise<void> {
@@ -265,6 +409,46 @@ export class MineflayerBot implements MinecraftBotPort {
       world,
       candidates: positions,
       logName: blockName,
+      origin,
+      maxDistance,
+      withinBounds: position => plan === undefined || isPositionWithinPlanBounds({ plan, position }),
+    });
+  }
+
+  locateAnimals({
+    species,
+    maxDistance,
+    plan,
+  }: {
+    species: HuntSpecies;
+    maxDistance: number;
+    plan?: Plan;
+  }): HuntableAnimal[] {
+    const bot = this.requireBot();
+    const origin = integerPosition(bot.entity.position);
+    const candidates: HuntCandidate[] = Object.values(bot.entities).map(entity => {
+      const registryEntity = entity.name === undefined ? undefined : bot.registry.entitiesByName[entity.name];
+      const metadataKeys = registryEntity?.metadataKeys ?? [];
+      const metadata = (key: string): unknown => {
+        const index = metadataKeys.indexOf(key);
+        return index === -1 ? undefined : entity.metadata[index];
+      };
+      return {
+        id: entity.id,
+        type: entity.type,
+        ...(entity.name === undefined ? {} : { name: entity.name }),
+        position: integerPosition(entity.position),
+        registryIdentityMatches: registryEntity !== undefined && entity.entityType === registryEntity.id,
+        customNamed: entity.getCustomName() !== null,
+        baby: metadata('baby') === true,
+        saddled: metadata('saddle') === true,
+        attached: hasAttachedVehicle(entity),
+        hasPassengers: entity.passengers.length > 0,
+      };
+    });
+    return selectHuntableAnimals({
+      candidates,
+      species,
       origin,
       maxDistance,
       withinBounds: position => plan === undefined || isPositionWithinPlanBounds({ plan, position }),
@@ -524,6 +708,136 @@ export class MineflayerBot implements MinecraftBotPort {
     return { requested: count, completed, details };
   }
 
+  async huntAnimals({
+    species,
+    count,
+    maxDistance,
+    plan,
+    signal,
+    assertAuthorized,
+  }: {
+    species: HuntSpecies;
+    count: number;
+    maxDistance: number;
+    plan: Plan;
+    signal: AbortSignal;
+    assertAuthorized: () => void;
+  }): Promise<ActionProgress> {
+    const bot = this.requireBot();
+    const weapon = ['netherite_axe', 'diamond_axe', 'iron_axe', 'stone_axe', 'wooden_axe', 'golden_axe']
+      .map(itemName => bot.inventory.items().find(item => item.name === itemName))
+      .find(item => item !== undefined);
+    if (weapon === undefined) {
+      throw new Error('The hunter requires an axe before hunting animals.');
+    }
+    assertAuthorized();
+    await runAbortable({
+      signal,
+      operation: async () => {
+        await bot.equip(weapon, 'hand');
+      },
+      stop: () => {
+        bot.clearControlStates();
+      },
+    });
+
+    const previousMovements = bot.pathfinder.movements;
+    const huntingMovements = new Movements(bot);
+    huntingMovements.canDig = false;
+    huntingMovements.allow1by1towers = false;
+    huntingMovements.allowParkour = false;
+    huntingMovements.maxDropDown = 2;
+    bot.pathfinder.setMovements(huntingMovements);
+
+    let completed = 0;
+    const details: string[] = [];
+    try {
+      while (completed < count) {
+        if (signal.aborted) {
+          throw abortError();
+        }
+        assertAuthorized();
+        const animal = this.locateAnimals({ species, maxDistance, plan })[0];
+        if (animal === undefined) {
+          break;
+        }
+        const target = bot.entities[animal.id];
+        if (!target?.isValid) {
+          continue;
+        }
+
+        const inventoryBefore = this.animalDropInventory(species);
+        let killed = false;
+        let lastPosition = integerPosition(target.position);
+        for (let attackNumber = 0; attackNumber < 16; attackNumber += 1) {
+          assertAuthorized();
+          if (!this.isEligibleAnimalTarget({ id: target.id, species, maxDistance, plan })) {
+            break;
+          }
+          lastPosition = integerPosition(target.position);
+          if (target.position.distanceTo(bot.entity.position) > 3) {
+            await this.moveTo({
+              target: lastPosition,
+              range: 2,
+              plan,
+              signal,
+              assertAuthorized,
+            });
+          }
+          assertAuthorized();
+          assertNotAborted(signal);
+          if (!this.isEligibleAnimalTarget({ id: target.id, species, maxDistance, plan })) {
+            break;
+          }
+          if (target.position.distanceTo(bot.entity.position) > 3.5) {
+            continue;
+          }
+
+          await runAbortable({
+            signal,
+            operation: async () => {
+              await bot.lookAt(target.position.offset(0, Math.max(target.height / 2, 0.5), 0), true);
+            },
+            stop: () => {
+              bot.clearControlStates();
+            },
+          });
+          assertAuthorized();
+          assertNotAborted(signal);
+          if (!this.isEligibleAnimalTarget({ id: target.id, species, maxDistance, plan })) {
+            break;
+          }
+          killed = await this.attackAndWaitForDeath({ target, signal });
+          if (killed) {
+            break;
+          }
+        }
+        if (!killed) {
+          details.push(`Stopped pursuing ${species} ${String(target.id)} because a safe kill was not verified.`);
+          break;
+        }
+
+        completed += 1;
+        const drops = await this.collectAnimalDrops({
+          species,
+          target: lastPosition,
+          before: inventoryBefore,
+          plan,
+          signal,
+          assertAuthorized,
+        });
+        const evidence = drops.length === 0 ? 'no eligible drops reached inventory' : `collected ${drops.join(', ')}`;
+        details.push(
+          `Killed unnamed adult ${species} at ${String(lastPosition.x)}, ${String(lastPosition.y)}, ${String(lastPosition.z)}; ${evidence}.`,
+        );
+      }
+    } finally {
+      bot.pathfinder.setMovements(previousMovements);
+    }
+
+    return { requested: count, completed, details };
+  }
+
   async craft({
     itemName,
     count,
@@ -616,15 +930,23 @@ export class MineflayerBot implements MinecraftBotPort {
       }
       assertAuthorized();
       const target = new Vec3(origin.x + operation.dx, origin.y + operation.dy, origin.z + operation.dz);
-      const existing = bot.blockAt(target);
+      let existing = bot.blockAt(target);
       if (existing?.name === operation.block || (operation.block === 'air' && existing?.name === 'air')) {
         completed += 1;
         continue;
       }
 
-      await this.moveTo({ target: integerPosition(target), range: 3, plan, signal, assertAuthorized });
+      await this.moveForBlueprintTarget({ target, plan, signal, assertAuthorized });
+      existing = bot.blockAt(target);
+      if (existing === null) {
+        throw new Error(`Target chunk is not loaded at ${target.toString()}.`);
+      }
+      if (existing.name === operation.block || (operation.block === 'air' && existing.name === 'air')) {
+        completed += 1;
+        continue;
+      }
       if (operation.block === 'air') {
-        if (existing === null || existing.name === 'air') {
+        if (existing.name === 'air') {
           completed += 1;
           continue;
         }
@@ -639,10 +961,7 @@ export class MineflayerBot implements MinecraftBotPort {
           },
         });
       } else {
-        const item = bot.inventory.items().find(candidate => candidate.name === operation.block);
-        if (item === undefined) {
-          throw new Error(`Missing ${operation.block} in inventory after ${String(completed)} blueprint operations.`);
-        }
+        const item = await this.ensureBlueprintItem({ blockName: operation.block, signal, assertAuthorized });
         assertAuthorized();
         await runAbortable({
           signal,
@@ -667,6 +986,7 @@ export class MineflayerBot implements MinecraftBotPort {
             bot.clearControlStates();
           },
         });
+        await waitForBlockName({ bot, target, expected: operation.block, signal });
       }
       completed += 1;
       details.push(`${operation.block} at ${target.toString()}`);
@@ -711,8 +1031,90 @@ export class MineflayerBot implements MinecraftBotPort {
       return;
     }
     bot.pathfinder.stop();
+    if (this.creativeFlightActive) {
+      bot.creative.stopFlying();
+      this.creativeFlightActive = false;
+    }
     bot.stopDigging();
     bot.clearControlStates();
+  }
+
+  private async moveForBlueprintTarget({
+    target,
+    plan,
+    signal,
+    assertAuthorized,
+  }: {
+    target: Vec3;
+    plan: Plan;
+    signal: AbortSignal;
+    assertAuthorized: () => void;
+  }): Promise<void> {
+    const bot = this.requireBot();
+    if (bot.game.gameMode !== 'creative') {
+      await this.moveTo({ target: integerPosition(target), range: 3, plan, signal, assertAuthorized });
+      return;
+    }
+
+    const destination = new Vec3(target.x + 0.5, target.y + 2.5, target.z + 0.5);
+    const cruisingY = Math.max(bot.entity.position.y, destination.y);
+    const waypoints = [
+      new Vec3(bot.entity.position.x, cruisingY, bot.entity.position.z),
+      new Vec3(destination.x, cruisingY, destination.z),
+      destination,
+    ];
+    for (const waypoint of waypoints) {
+      assertAuthorized();
+      if (!isPositionWithinPlanBounds({ plan, position: integerPosition(waypoint) })) {
+        throw new Error('Creative build flight would leave the approved plan radius.');
+      }
+      this.creativeFlightActive = true;
+      try {
+        await runCreativeFlight({ bot, destination: waypoint, signal, assertAuthorized });
+      } finally {
+        this.creativeFlightActive = false;
+      }
+    }
+  }
+
+  private async ensureBlueprintItem({
+    blockName,
+    signal,
+    assertAuthorized,
+  }: {
+    blockName: string;
+    signal: AbortSignal;
+    assertAuthorized: () => void;
+  }) {
+    const bot = this.requireBot();
+    const existing = bot.inventory.items().find(candidate => candidate.name === blockName);
+    if (existing !== undefined) {
+      return existing;
+    }
+    if (bot.game.gameMode !== 'creative') {
+      throw new Error(`Missing ${blockName} in inventory.`);
+    }
+    const itemType = bot.registry.itemsByName[blockName];
+    if (itemType === undefined) {
+      throw new Error(`Minecraft 1.21.4 has no placeable item named ${blockName}.`);
+    }
+    const Item = prismarineItem(bot.registry);
+    assertAuthorized();
+    await runAbortable({
+      signal,
+      operation: async () => {
+        await bot.creative.setInventorySlot(36, new Item(itemType.id, itemType.stackSize));
+      },
+      stop: () => {
+        bot.clearControlStates();
+      },
+    });
+    bot.setQuickBarSlot(0);
+    const created = bot.inventory.slots[36];
+    if (created?.name !== blockName) {
+      throw new Error(`Minecraft rejected the creative ${blockName} material stack.`);
+    }
+    return created;
   }
 
   async say(message: string): Promise<void> {
@@ -760,6 +1162,103 @@ export class MineflayerBot implements MinecraftBotPort {
         `Mined ${String(expectedIncrease)} blocks, but only ${String(collected)} drops were verified in inventory.`,
       );
     }
+  }
+
+  private animalDropInventory(species: HuntSpecies): Map<string, number> {
+    const bot = this.requireBot();
+    const counts = new Map<string, number>();
+    for (const item of bot.inventory.items()) {
+      if (isVerifiedAnimalDrop({ species, itemName: item.name })) {
+        counts.set(item.name, (counts.get(item.name) ?? 0) + item.count);
+      }
+    }
+    return counts;
+  }
+
+  private isEligibleAnimalTarget({
+    id,
+    species,
+    maxDistance,
+    plan,
+  }: {
+    id: number;
+    species: HuntSpecies;
+    maxDistance: number;
+    plan: Plan;
+  }): boolean {
+    const bot = this.requireBot();
+    const target = bot.entities[id];
+    return (
+      target?.isValid === true &&
+      this.locateAnimals({ species, maxDistance, plan }).some(candidate => candidate.id === id)
+    );
+  }
+
+  private async attackAndWaitForDeath({
+    target,
+    signal,
+  }: {
+    target: Bot['entity'];
+    signal: AbortSignal;
+  }): Promise<boolean> {
+    const bot = this.requireBot();
+    let hurtByBot = false;
+    let killedByBot = false;
+    const handleHurt = (hurtEntity: Bot['entity'], source: { id?: number } | undefined) => {
+      if (hurtEntity.id === target.id) {
+        hurtByBot = source?.id === bot.entity.id;
+      }
+    };
+    const handleDeath = (deadEntity: Bot['entity']) => {
+      if (deadEntity.id === target.id && hurtByBot) {
+        killedByBot = true;
+      }
+    };
+    bot.on('entityHurt', handleHurt);
+    bot.on('entityDead', handleDeath);
+    try {
+      bot.attack(target);
+      await wait({ milliseconds: 1_250, signal });
+      return killedByBot;
+    } finally {
+      bot.removeListener('entityHurt', handleHurt);
+      bot.removeListener('entityDead', handleDeath);
+    }
+  }
+
+  private async collectAnimalDrops({
+    species,
+    target,
+    before,
+    plan,
+    signal,
+    assertAuthorized,
+  }: {
+    species: HuntSpecies;
+    target: Position;
+    before: Map<string, number>;
+    plan: Plan;
+    signal: AbortSignal;
+    assertAuthorized: () => void;
+  }): Promise<string[]> {
+    await wait({ milliseconds: 200, signal });
+    assertAuthorized();
+    await this.moveTo({ target, range: 1, plan, signal, assertAuthorized });
+    const deadline = Date.now() + 3_500;
+    let changes: string[] = [];
+    while (Date.now() < deadline) {
+      assertAuthorized();
+      const after = this.animalDropInventory(species);
+      changes = [...after.entries()]
+        .map(([itemName, itemCount]) => ({ itemName, count: itemCount - (before.get(itemName) ?? 0) }))
+        .filter(change => change.count > 0)
+        .map(change => `${String(change.count)} ${change.itemName}`);
+      if (changes.length > 0) {
+        return changes;
+      }
+      await wait({ milliseconds: 150, signal });
+    }
+    return changes;
   }
 
   private findPlacementReference(target: Vec3) {

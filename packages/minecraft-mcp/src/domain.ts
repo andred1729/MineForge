@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const ActionSchema = z.enum(['move', 'gather', 'craft', 'build', 'drop']);
+export const ActionSchema = z.enum(['move', 'gather', 'craft', 'build', 'hunt', 'drop']);
 export type Action = z.infer<typeof ActionSchema>;
 
 export const PositionSchema = z.object({
@@ -14,14 +14,27 @@ export interface Position {
   z: number;
 }
 
-export const BeginPlanInputSchema = z.object({
+export const BlueprintPlanBindingSchema = z.object({
+  blueprint_id: z.string().min(1).max(100),
+  digest: z.string().regex(/^[a-f0-9]{64}$/),
+  origin: PositionSchema,
+});
+
+const PlanInputSchema = z.object({
   summary: z.string().min(1).max(500),
   steps: z.array(z.string().min(1).max(300)).min(1).max(12),
   permitted_actions: z.array(ActionSchema).min(1),
   duration_minutes: z.number().int().min(1).max(15).default(15),
   radius_blocks: z.number().int().min(1).max(32).default(32),
 });
+
+export const BeginPlanInputSchema = PlanInputSchema;
 export type BeginPlanInput = z.infer<typeof BeginPlanInputSchema>;
+
+export const BeginBlueprintPlanInputSchema = PlanInputSchema.extend({
+  blueprint: BlueprintPlanBindingSchema,
+});
+export type BeginBlueprintPlanInput = z.infer<typeof BeginBlueprintPlanInputSchema>;
 
 export const BlueprintBlockSchema = z.object({
   dx: z.number().int().min(-32).max(32),
@@ -48,6 +61,7 @@ export const PlanSchema = z.object({
   radiusBlocks: z.number().int().positive(),
   createdAt: z.number().int().nonnegative(),
   expiresAt: z.number().int().positive(),
+  blueprint: BlueprintPlanBindingSchema.optional(),
 });
 export type Plan = z.infer<typeof PlanSchema>;
 

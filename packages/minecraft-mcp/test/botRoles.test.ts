@@ -2,21 +2,21 @@ import { describe, expect, it } from 'vitest';
 
 import { createBotIdentity } from '../src/botRoles.js';
 
-describe('bot role slots', () => {
-  it('assigns deterministic identities and roles to the five demo bots', () => {
+describe('bot identities', () => {
+  it('assigns the same neutral capabilities to every unprompted worker', () => {
     expect(Array.from({ length: 5 }, (_, index) => createBotIdentity(index + 1))).toEqual([
       {
         ordinal: 1,
         username: 'ForgeBot1',
         slug: 'forgebot1',
-        role: 'lumberjack',
+        role: 'generalist',
         connectorName: 'minecraft-forgebot1',
-        agentName: 'forgebot1-lumberjack',
+        agentName: 'forgebot1-generalist',
       },
-      expect.objectContaining({ ordinal: 2, username: 'ForgeBot2', role: 'miner' }),
-      expect.objectContaining({ ordinal: 3, username: 'ForgeBot3', role: 'builder' }),
-      expect.objectContaining({ ordinal: 4, username: 'ForgeBot4', role: 'hunter' }),
-      expect.objectContaining({ ordinal: 5, username: 'ForgeBot5', role: 'scout' }),
+      expect.objectContaining({ ordinal: 2, username: 'ForgeBot2', role: 'generalist' }),
+      expect.objectContaining({ ordinal: 3, username: 'ForgeBot3', role: 'generalist' }),
+      expect.objectContaining({ ordinal: 4, username: 'ForgeBot4', role: 'generalist' }),
+      expect.objectContaining({ ordinal: 5, username: 'ForgeBot5', role: 'generalist' }),
     ]);
     expect(() => createBotIdentity(6)).toThrow('limited to five');
   });

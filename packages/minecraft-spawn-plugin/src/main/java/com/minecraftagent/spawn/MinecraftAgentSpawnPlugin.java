@@ -5,7 +5,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.EnumSet;
-import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -83,10 +82,11 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
       sender.sendMessage("Only an in-game player can choose a ForgeBot spawn location.");
       return true;
     }
-    if (arguments.length != 0) {
-      requester.sendMessage("Usage: /spawn");
+    if (arguments.length > 1) {
+      requester.sendMessage("Usage: /spawn X");
       return true;
     }
+    Optional<BotRole> requestedRole = Optional.empty();
     if (requester.getWorld().getEnvironment() != World.Environment.NORMAL) {
       requester.sendMessage("ForgeBots can currently be spawned only in the Overworld.");
       return true;
@@ -99,6 +99,7 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
     Location requestedLocation = requester.getLocation().clone();
     SpawnControlRequest request =
         new SpawnControlRequest(
+            requestedRole,
             requester.getUniqueId(),
             requester.getName(),
             requester.getWorld().getUID(),
@@ -109,7 +110,6 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
             requestedLocation.getYaw(),
             requestedLocation.getPitch());
 
-    requester.sendMessage("Requesting the next ForgeBot from TrueForge...");
     httpClient
         .sendAsync(
             request.toHttpRequest(spawnEndpoint, spawnToken),
@@ -119,12 +119,15 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
                 Bukkit.getScheduler()
                     .runTask(
                         this,
-                        () -> finishSpawn(requester.getUniqueId(), requestedLocation, response, failure)));
+                        () ->
+                            finishSpawn(
+                                requester.getUniqueId(), requestedRole, requestedLocation, response, failure)));
     return true;
   }
 
   private void finishSpawn(
       UUID requesterUuid,
+      Optional<BotRole> requestedRole,
       Location requestedLocation,
       HttpResponse<String> response,
       Throwable failure) {
@@ -137,7 +140,7 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
     }
     if (response.statusCode() == 409) {
       spawnInFlight.set(false);
-      tell(requester, "All five ForgeBots are already active.");
+      tell(requester, safeLogBody(response.body()));
       return;
     }
     if (response.statusCode() != 201) {
@@ -159,6 +162,10 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
       return;
     }
     BotIdentity identity = parsed.get();
+    if (requestedRole.isPresent() && identity.role() != requestedRole.get()) {
+      rollback(identity, requester, "did not match the requested role");
+      return;
+    }
     Player bot = Bukkit.getPlayerExact(identity.username());
     if (bot == null) {
       rollback(identity, requester, "did not join Minecraft");
@@ -181,22 +188,22 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
       return;
     }
     bot.setFallDistance(0);
-    giveStartingKit(bot, identity.slot());
+    giveStartingKit(bot, identity.role());
     applyClassicSkin(identity.username());
     spawnInFlight.set(false);
     tell(
         requester,
-        identity.username()
-            + " spawned nearby as the "
-            + identity.role()
-            + ". Open its TrueForge session to assign work.");
+        "Go to the TrueForge console to assign work to " + identity.username() + ".");
+    notifyReady(identity, requester);
   }
 
   private void rollback(BotIdentity identity, Player requester, String reason) {
     tell(requester, identity.username() + " " + reason + "; rolling back its slot.");
-    RollbackControlRequest request = new RollbackControlRequest(identity.username());
+    BotControlRequest request = new BotControlRequest(identity.username());
     httpClient
-        .sendAsync(request.toHttpRequest(spawnEndpoint, spawnToken), HttpResponse.BodyHandlers.ofString())
+        .sendAsync(
+            request.toHttpRequest(spawnEndpoint, "rollback", spawnToken),
+            HttpResponse.BodyHandlers.ofString())
         .whenComplete(
             (response, failure) -> {
               spawnInFlight.set(false);
@@ -213,6 +220,39 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
                         + response.statusCode()
                         + ": "
                         + safeLogBody(response.body()));
+              }
+            });
+  }
+
+  private void notifyReady(BotIdentity identity, Player requester) {
+    BotControlRequest request = new BotControlRequest(identity.username());
+    httpClient
+        .sendAsync(
+            request.toHttpRequest(spawnEndpoint, "ready", spawnToken),
+            HttpResponse.BodyHandlers.ofString())
+        .whenComplete(
+            (response, failure) -> {
+              if (failure != null) {
+                getLogger().warning(
+                    "Could not initialize "
+                        + identity.username()
+                        + " in TrueForge: "
+                        + failure.getMessage());
+                return;
+              }
+              if (response.statusCode() != 204) {
+                getLogger().warning(
+                    "TrueForge initialization for "
+                        + identity.username()
+                        + " returned HTTP "
+                        + response.statusCode());
+                Bukkit.getScheduler()
+                    .runTask(
+                        this,
+                        () ->
+                            tell(
+                                requester,
+                                "The bot is ready, but its TrueForge introduction did not start."));
               }
             });
   }
@@ -264,40 +304,37 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
     return false;
   }
 
-  private void giveStartingKit(Player bot, int slot) {
+  private void giveStartingKit(Player bot, BotRole role) {
     bot.getInventory().clear();
-    switch (slot) {
-      case 1 -> {
-        add(bot, Material.STONE_AXE, 1);
-        add(bot, Material.OAK_SAPLING, 8);
-        add(bot, Material.BAKED_POTATO, 16);
+    add(bot, Material.STONE_AXE, 1);
+    add(bot, Material.IRON_PICKAXE, 1);
+    add(bot, Material.IRON_SWORD, 1);
+    add(bot, Material.BAKED_POTATO, 16);
+    switch (role) {
+      case GENERALIST -> {
+        // The console assignment determines the job; keep the initial kit neutral.
       }
-      case 2 -> {
-        add(bot, Material.IRON_PICKAXE, 1);
+      case LUMBERJACK -> {
+        add(bot, Material.OAK_SAPLING, 8);
+      }
+      case MINER -> {
         add(bot, Material.TORCH, 64);
         add(bot, Material.LADDER, 32);
-        add(bot, Material.BAKED_POTATO, 16);
       }
-      case 3 -> {
-        add(bot, Material.IRON_AXE, 1);
-        add(bot, Material.IRON_PICKAXE, 1);
+      case BUILDER -> {
         add(bot, Material.OAK_PLANKS, 256);
         add(bot, Material.COBBLESTONE, 128);
         add(bot, Material.GLASS_PANE, 64);
         add(bot, Material.OAK_DOOR, 1);
         add(bot, Material.TORCH, 32);
       }
-      case 4 -> {
-        add(bot, Material.IRON_SWORD, 1);
+      case HUNTER -> {
         add(bot, Material.SHIELD, 1);
-        add(bot, Material.BAKED_POTATO, 16);
       }
-      case 5 -> {
+      case SCOUT -> {
         add(bot, Material.COMPASS, 1);
         add(bot, Material.SPYGLASS, 1);
-        add(bot, Material.BAKED_POTATO, 16);
       }
-      default -> throw new IllegalArgumentException("Unsupported ForgeBot slot: " + slot);
     }
   }
 

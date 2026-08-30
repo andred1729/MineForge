@@ -25,6 +25,8 @@
     "lint:ci": "eslint . --cache --cache-location .eslintcache",
     "lint": "eslint . --fix --cache --cache-location .eslintcache --cache-strategy content",
     "minecraft:bridge": "pnpm --filter @minecraft-agent/minecraft-mcp dev",
+    "minecraft:blueprint:fixture": "pnpm --filter @minecraft-agent/minecraft-mcp blueprint:fixture",
+    "minecraft:blueprint:import": "pnpm --filter @minecraft-agent/minecraft-mcp blueprint:import --",
     "minecraft:demo": "bash scripts/minecraft-demo.sh",
     "minecraft:plugin:build": "docker build --file packages/minecraft-spawn-plugin/Dockerfile --tag minecraft-agent-paper:local .",
     "minecraft:plugin:test": "docker build --target plugin-build --file packages/minecraft-spawn-plugin/Dockerfile --tag minecraft-agent-spawn-plugin:test .",

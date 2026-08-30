@@ -7,10 +7,12 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.StringJoiner;
 import java.util.UUID;
 
 record SpawnControlRequest(
+    Optional<BotRole> role,
     UUID requesterUuid,
     String requesterName,
     UUID worldUuid,
@@ -33,6 +35,7 @@ record SpawnControlRequest(
 
   String toFormBody() {
     Map<String, String> values = new LinkedHashMap<>();
+    role.ifPresent(value -> values.put("role", value.wireName()));
     values.put("requester_uuid", requesterUuid.toString());
     values.put("requester_name", requesterName);
     values.put("world_uuid", worldUuid.toString());

@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.URI;
 import java.net.http.HttpRequest;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -13,6 +14,7 @@ final class SpawnControlRequestTest {
   void encodesRequesterAndLocationWithoutPuttingTheTokenInTheBody() {
     SpawnControlRequest request =
         new SpawnControlRequest(
+            Optional.empty(),
             UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
             "Player One",
             UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
@@ -26,6 +28,7 @@ final class SpawnControlRequestTest {
     String body = request.toFormBody();
 
     assertTrue(body.contains("requester_name=Player+One"));
+    assertTrue(!body.contains("role="));
     assertTrue(body.contains("world_name=Demo+World"));
     assertTrue(body.contains("z=-3.25"));
     assertTrue(!body.contains("secret-token"));
