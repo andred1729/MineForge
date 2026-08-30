@@ -308,6 +308,7 @@ export async function navigateNear({
 export class MineflayerBot implements MinecraftBotPort {
   private bot: Bot | null = null;
   private creativeFlightActive = false;
+  private readonly pendingTemporaryScaffolds = new Map<string, { position: Vec3; plan: Plan }>();
   private readonly chatListeners = new Set<(event: { username: string; message: string }) => void>();
 
   constructor(private readonly options: MineflayerBotOptions) {}
@@ -968,6 +969,9 @@ export class MineflayerBot implements MinecraftBotPort {
     assertAuthorized: () => void;
   }): Promise<ActionProgress> {
     const bot = this.requireBot();
+    if (this.pendingTemporaryScaffolds.size > 0) {
+      await this.rollbackTemporaryScaffolds({ positions: [], plan });
+    }
     const ordered = [...blocks].sort((left, right) => {
       if (left.block === 'air' && right.block !== 'air') {
         return -1;
@@ -1284,19 +1288,35 @@ export class MineflayerBot implements MinecraftBotPort {
   }
 
   private async rollbackTemporaryScaffolds({ positions, plan }: { positions: Vec3[]; plan: Plan }): Promise<void> {
-    const cleanupController = new AbortController();
-    const cleanupTimeout = setTimeout(() => {
-      cleanupController.abort();
-    }, 5_000);
-    try {
-      await this.removeTemporaryScaffolds({
-        positions,
-        plan,
-        signal: cleanupController.signal,
-        assertAuthorized: () => undefined,
-      });
-    } finally {
-      clearTimeout(cleanupTimeout);
+    for (const position of positions) {
+      this.pendingTemporaryScaffolds.set(position.toString(), { position: position.clone(), plan });
+    }
+
+    const failures: Error[] = [];
+    for (const [key, pending] of [...this.pendingTemporaryScaffolds.entries()].reverse()) {
+      const cleanupController = new AbortController();
+      const cleanupTimeout = setTimeout(() => {
+        cleanupController.abort();
+      }, 10_000);
+      try {
+        await this.removeTemporaryScaffolds({
+          positions: [pending.position],
+          plan: pending.plan,
+          signal: cleanupController.signal,
+          assertAuthorized: () => undefined,
+        });
+        this.pendingTemporaryScaffolds.delete(key);
+      } catch (caught) {
+        failures.push(caught instanceof Error ? caught : new Error(`Could not remove scaffold at ${key}.`));
+      } finally {
+        clearTimeout(cleanupTimeout);
+      }
+    }
+    if (failures.length > 0) {
+      throw new Error(
+        `Could not remove ${String(failures.length)} temporary scaffold block(s); cleanup will retry before the next blueprint batch.`,
+        { cause: failures[0] },
+      );
     }
   }
 

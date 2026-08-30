@@ -298,9 +298,49 @@ describe('Mineflayer temporary scaffolding', () => {
     expect(remove).toHaveBeenCalledOnce();
     expect(warning).toHaveBeenCalledWith(
       'Could not completely roll back temporary Minecraft scaffolding.',
-      expect.objectContaining({ message: 'cleanup also failed' }),
+      expect.objectContaining({
+        message: 'Could not remove 1 temporary scaffold block(s); cleanup will retry before the next blueprint batch.',
+        cause: expect.objectContaining({ message: 'cleanup also failed' }),
+      }),
     );
     warning.mockRestore();
+  });
+
+  it('bounds cleanup per scaffold and retries only positions that remain', async () => {
+    const subject = new MineflayerBot({
+      host: '127.0.0.1',
+      port: 25565,
+      username: 'ForgeBot1',
+      version: '1.21.4',
+    });
+    const first = new Vec3(0, 64, 0);
+    const second = new Vec3(0, 65, 0);
+    const internals = subject as unknown as {
+      rollbackTemporaryScaffolds(input: { positions: Vec3[]; plan: Plan }): Promise<void>;
+      removeTemporaryScaffolds(input: { positions: Vec3[]; signal: AbortSignal }): Promise<void>;
+    };
+    const attempts: string[] = [];
+    let failSecondOnce = true;
+    const remove = vi.spyOn(internals, 'removeTemporaryScaffolds').mockImplementation(async input => {
+      expect(input.signal.aborted).toBe(false);
+      const key = input.positions[0]?.toString() ?? 'missing';
+      attempts.push(key);
+      if (key === second.toString() && failSecondOnce) {
+        failSecondOnce = false;
+        throw new Error('temporary cleanup failure');
+      }
+    });
+
+    await expect(internals.rollbackTemporaryScaffolds({ positions: [first, second], plan: buildPlan })).rejects.toThrow(
+      'cleanup will retry before the next blueprint batch',
+    );
+
+    expect(attempts).toEqual([second.toString(), first.toString()]);
+    expect(remove.mock.calls[0]?.[0].signal).not.toBe(remove.mock.calls[1]?.[0].signal);
+
+    attempts.length = 0;
+    await internals.rollbackTemporaryScaffolds({ positions: [], plan: buildPlan });
+    expect(attempts).toEqual([second.toString()]);
   });
 });
 
