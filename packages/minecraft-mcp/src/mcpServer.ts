@@ -155,8 +155,6 @@ export function createMinecraftMcpServer({
   blueprintCatalog = new BlueprintCatalog('.data'),
   recommendedBlueprintOrigin,
   enableCreativeMode,
-  spawnBuildHelpers,
-  resolveBuildWorker,
   role,
 }: {
   bot: MinecraftBotPort;
@@ -166,8 +164,6 @@ export function createMinecraftMcpServer({
   blueprintCatalog?: BlueprintCatalog;
   recommendedBlueprintOrigin?: Position;
   enableCreativeMode?: () => Promise<void>;
-  spawnBuildHelpers?: (count: number) => Promise<{ id: string; username: string }[]>;
-  resolveBuildWorker?: (workerId: string) => { bot: MinecraftBotPort; actionQueue: MinecraftActionQueue } | null;
   role?: BotRole;
 }): McpServer {
   const server = new McpServer({ name: 'minecraft-agent', version: '0.1.0' });
@@ -312,31 +308,6 @@ export function createMinecraftMcpServer({
         await enableCreativeMode();
         await bot.say('Creative mode approved in TrueForge. I can now reach the full build safely.');
         return { creative_mode: true, reason };
-      }),
-  );
-
-  server.registerTool(
-    'spawn_build_helpers',
-    {
-      description:
-        'Request one to three visible creative helper bodies named sub_agentX. TrueForge must obtain human approval before spawning them.',
-      inputSchema: z.object({ count: z.number().int().min(1).max(3).default(2) }),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    },
-    async ({ count }) =>
-      await executeTool(async () => {
-        if (spawnBuildHelpers === undefined) {
-          throw new Error('Visible build helpers are unavailable for this Minecraft worker.');
-        }
-        const helpers = await spawnBuildHelpers(count);
-        await bot.say(
-          `TrueForge approved ${String(helpers.length)} build helpers: ${helpers.map(item => item.id).join(', ')}.`,
-        );
-        return {
-          helpers,
-          delegation_instruction:
-            'Create one TrueForge subagent thread per helper and include its exact worker_id in every execute_blueprint_batch call.',
-        };
       }),
   );
 
@@ -592,10 +563,7 @@ export function createMinecraftMcpServer({
         blueprint_id: BlueprintIdSchema,
         digest: BlueprintDigestSchema,
         batch_index: z.number().int().min(0),
-        worker_id: z
-          .string()
-          .regex(/^(?:lead|sub_agent[1-3])$/)
-          .default('lead'),
+        worker_id: z.literal('lead').default('lead'),
       }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     },
@@ -603,10 +571,7 @@ export function createMinecraftMcpServer({
       { plan_id: planId, blueprint_id: blueprintId, digest, batch_index: batchIndex, worker_id: workerId },
       extra,
     ) => {
-      const worker = workerId === 'lead' ? { bot, actionQueue } : (resolveBuildWorker?.(workerId) ?? null);
-      if (worker === null) {
-        return toolError(new Error(`${workerId} is not an active approved build helper.`));
-      }
+      const worker = { bot, actionQueue };
       return await executeActionTool({
         signal: extra.signal,
         bot: worker.bot,

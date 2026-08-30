@@ -47,13 +47,13 @@ export function agentManifest({
         preload: true,
         enableTools: ['@all'],
         requireApprovalForTools: canBuildComplexBlueprints
-          ? ['enable_creative_mode', 'spawn_build_helpers', 'begin_plan', 'begin_blueprint_plan']
+          ? ['enable_creative_mode', 'begin_plan', 'begin_blueprint_plan']
           : ['begin_plan'],
       },
     ],
     config: {
       askUserQuestions: { enabled: true },
-      dynamicSubAgents: { enabled: canBuildComplexBlueprints },
+      dynamicSubAgents: { enabled: false },
       generativeUi: { enabled: false },
       iterationLimit: 100,
       sandbox: { enabled: false },

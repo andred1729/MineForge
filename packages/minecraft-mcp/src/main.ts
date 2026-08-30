@@ -52,21 +52,6 @@ export async function main(): Promise<void> {
         username: identity.username,
         version: config.minecraftVersion,
       }),
-    createHelperBot: username =>
-      new MineflayerBot({
-        host: config.minecraftHost,
-        port: config.minecraftPort,
-        username,
-        version: config.minecraftVersion,
-      }),
-    prepareHelper: async ({ username, index }) => {
-      await minecraftAdmin.setCreativeMode(username);
-      await minecraftAdmin.teleport(username, {
-        x: VILLA_BUILD_ORIGIN.x + 12 + index * 2,
-        y: VILLA_BUILD_ORIGIN.y + 1,
-        z: VILLA_BUILD_ORIGIN.z + 16,
-      });
-    },
     createSessionClient: record =>
       new TrueForgeSessionClient({
         baseUrl: config.trueforgeBaseUrl,
@@ -101,8 +86,6 @@ export async function main(): Promise<void> {
                     enableCreativeMode: async () => {
                       await minecraftAdmin.setCreativeMode(context.record.username);
                     },
-                    spawnBuildHelpers: async (count: number) => await workforce.spawnBuildHelpers(slug, count),
-                    resolveBuildWorker: (workerId: string) => workforce.resolveBuildWorker(slug, workerId),
                   }
                 : {}),
             });

@@ -84,7 +84,6 @@ describe('Minecraft MCP server', () => {
       'import_blueprint_url',
       'inspect_blueprint',
       'enable_creative_mode',
-      'spawn_build_helpers',
       'begin_plan',
       'begin_blueprint_plan',
       'move_to',
@@ -390,10 +389,8 @@ describe('Minecraft MCP server', () => {
     });
     await catalog.save(blueprint);
     const bot = fakeBot();
-    const helperBot = fakeBot();
-    const executeBlueprint = vi.spyOn(helperBot, 'executeBlueprint');
+    const executeBlueprint = vi.spyOn(bot, 'executeBlueprint');
     const enableCreativeMode = vi.fn(async () => undefined);
-    const spawnBuildHelpers = vi.fn(async () => [{ id: 'sub_agent1', username: 'sub_agent1' }]);
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const server = createMinecraftMcpServer({
       bot,
@@ -401,9 +398,6 @@ describe('Minecraft MCP server', () => {
       actionQueue: new MinecraftActionQueue(),
       blueprintCatalog: catalog,
       enableCreativeMode,
-      spawnBuildHelpers,
-      resolveBuildWorker: workerId =>
-        workerId === 'sub_agent1' ? { bot: helperBot, actionQueue: new MinecraftActionQueue() } : null,
     });
     const client = new Client({ name: 'minecraft-blueprint-test', version: '1.0.0' });
     await server.connect(serverTransport);
@@ -415,10 +409,6 @@ describe('Minecraft MCP server', () => {
       );
       expect(creative.isError).not.toBe(true);
       expect(enableCreativeMode).toHaveBeenCalledOnce();
-      const helpers = TextResultSchema.parse(
-        await client.callTool({ name: 'spawn_build_helpers', arguments: { count: 1 } }),
-      );
-      expect(JSON.parse(firstText(helpers))).toMatchObject({ helpers: [{ id: 'sub_agent1' }] });
 
       const inspection = TextResultSchema.parse(
         await client.callTool({ name: 'inspect_blueprint', arguments: { blueprint_id: blueprint.id } }),
@@ -457,7 +447,7 @@ describe('Minecraft MCP server', () => {
             blueprint_id: blueprint.id,
             digest: blueprint.digest,
             batch_index: 0,
-            worker_id: 'sub_agent1',
+            worker_id: 'lead',
           },
         }),
       );
@@ -467,7 +457,7 @@ describe('Minecraft MCP server', () => {
         batch_index: 0,
         batch_count: 1,
         next_batch_index: null,
-        worker_id: 'sub_agent1',
+        worker_id: 'lead',
       });
       expect(executeBlueprint).toHaveBeenCalledWith(
         expect.objectContaining({
