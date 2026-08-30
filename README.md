@@ -6,32 +6,7 @@ Code is not the only thing agents / harness should be good at!
 
 ## How it works
 
-```mermaid
-flowchart LR
-  Player["Minecraft player"] --> Paper["Paper server<br/>spawn plugin"]
-  Paper --> Bridge["Minecraft bridge<br/>workforce manager"]
-  Bridge <--> Bot["Mineflayer bot"]
-  Bot <--> Paper
-
-  subgraph TrueForge["TrueForge Core"]
-    direction TB
-    UI["Web console"]
-    Runtime["Agent runtime<br/>model loop and tools"]
-    Sessions["Durable agents, sessions,<br/>turns, and history"]
-    Approval["Human approval<br/>and cancellation"]
-    Subagents["Subagent coordination"]
-
-    UI <--> Runtime
-    Runtime <--> Sessions
-    Runtime <--> Approval
-    Runtime <--> Subagents
-  end
-
-  Bridge -->|creates and restores workers| Sessions
-  Runtime -->|bot-scoped MCP tools| Bridge
-  Bot -->|player chat| Sessions
-  Runtime -->|progress and replies| Bot
-```
+![MineForge architecture](./docs/images/mineforge-architecture.png)
 
 _TrueForge remains the harness and interface._ It owns the model loop, agent instructions, durable sessions, conversation history, tool approval, cancellation, and subagent coordination. _The Minecraft bridge does not run a separate agent loop._
 
