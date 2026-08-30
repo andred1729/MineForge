@@ -30,7 +30,14 @@ function providerNameFromModel(modelFqn: string): string {
   return separator === -1 ? modelFqn : modelFqn.slice(0, separator);
 }
 
-function agentManifest({ identity, modelFqn }: { identity: BotIdentity; modelFqn: string }): TrueForgeApi.AgentSpec {
+export function agentManifest({
+  identity,
+  modelFqn,
+}: {
+  identity: BotIdentity;
+  modelFqn: string;
+}): TrueForgeApi.AgentSpec {
+  const canBuildComplexBlueprints = identity.role === 'builder' || identity.role === 'generalist';
   return {
     model: { name: modelFqn },
     instructions: minecraftAgentInstructions(identity),
@@ -39,13 +46,14 @@ function agentManifest({ identity, modelFqn }: { identity: BotIdentity; modelFqn
         name: identity.connectorName,
         preload: true,
         enableTools: ['@all'],
-        requireApprovalForTools:
-          identity.role === 'builder' ? ['enable_creative_mode', 'spawn_build_helpers', 'begin_plan'] : ['begin_plan'],
+        requireApprovalForTools: canBuildComplexBlueprints
+          ? ['enable_creative_mode', 'spawn_build_helpers', 'begin_plan']
+          : ['begin_plan'],
       },
     ],
     config: {
       askUserQuestions: { enabled: true },
-      dynamicSubAgents: { enabled: identity.role === 'builder' },
+      dynamicSubAgents: { enabled: canBuildComplexBlueprints },
       generativeUi: { enabled: false },
       iterationLimit: 100,
       sandbox: { enabled: false },
@@ -80,7 +88,7 @@ export class TrueForgeProvisioner implements TrueForgeProvisionerPort {
     await this.client.settings.mcpServers.createOrUpdate({
       manifest: {
         name: identity.connectorName,
-        description: `Bot-scoped Minecraft controls for ${identity.username} (${identity.role}).`,
+        description: `Bot-scoped Minecraft controls for ${identity.username}.`,
         type: 'remote',
         url: `${this.options.mcpPublicBaseUrl.replace(/\/$/, '')}/bots/${identity.slug}/mcp`,
       },

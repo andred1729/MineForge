@@ -14,7 +14,7 @@ final class SpawnControlRequestTest {
   void encodesRequesterAndLocationWithoutPuttingTheTokenInTheBody() {
     SpawnControlRequest request =
         new SpawnControlRequest(
-            Optional.of(BotRole.HUNTER),
+            Optional.empty(),
             UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
             "Player One",
             UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
@@ -28,7 +28,7 @@ final class SpawnControlRequestTest {
     String body = request.toFormBody();
 
     assertTrue(body.contains("requester_name=Player+One"));
-    assertTrue(body.contains("role=hunter"));
+    assertTrue(!body.contains("role="));
     assertTrue(body.contains("world_name=Demo+World"));
     assertTrue(body.contains("z=-3.25"));
     assertTrue(!body.contains("secret-token"));

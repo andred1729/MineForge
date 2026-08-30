@@ -55,7 +55,7 @@ describe('Minecraft spawn ingress', () => {
     }
   });
 
-  it('accepts the rebuilt role contract and acknowledges Paper placement readiness', async () => {
+  it('returns a generalist identity for a neutral spawn and acknowledges Paper placement readiness', async () => {
     const ready: string[] = [];
     const server = startSpawnServer({
       host: '127.0.0.1',
@@ -68,8 +68,8 @@ describe('Minecraft spawn ingress', () => {
       },
       spawn: async () => ({
         username: 'ForgeBot3',
-        role: 'builder',
-        agentName: 'forgebot3-builder',
+        role: 'generalist',
+        agentName: 'forgebot3-generalist',
         sessionId: 'session-3',
         consoleUrl: 'http://127.0.0.1:8790/sessions/session-3',
       }),
@@ -78,7 +78,6 @@ describe('Minecraft spawn ingress', () => {
     try {
       const rebuiltForm = new URLSearchParams(FORM);
       rebuiltForm.delete('requested_role');
-      rebuiltForm.set('role', 'builder');
       const headers = { 'x-minecraft-agent-token': 'test-token-at-least-16-characters' };
       const spawned = await fetch(`http://127.0.0.1:${String(server.port())}/spawn`, {
         method: 'POST',
@@ -86,7 +85,7 @@ describe('Minecraft spawn ingress', () => {
         body: rebuiltForm,
       });
       expect(spawned.status).toBe(201);
-      expect(await spawned.text()).toBe('ForgeBot3:builder');
+      expect(await spawned.text()).toBe('ForgeBot3:generalist');
 
       const initialized = await fetch(`http://127.0.0.1:${String(server.port())}/spawn/ready`, {
         method: 'POST',

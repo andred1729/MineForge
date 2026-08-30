@@ -297,7 +297,7 @@ describe('Minecraft MCP server', () => {
     await server.close();
   });
 
-  it('exposes hunting only to the hunter and requires an approved hunt plan', async () => {
+  it('gives a generalist hunting tools and requires an approved hunt plan', async () => {
     const bot = fakeBot();
     const huntAnimals = vi.fn<MinecraftBotPort['huntAnimals']>(async ({ count }) => ({
       requested: count,
@@ -311,14 +311,16 @@ describe('Minecraft MCP server', () => {
       bot,
       planStore: new PlanStore(),
       actionQueue: new MinecraftActionQueue(),
-      role: 'hunter',
+      role: 'generalist',
     });
-    const client = new Client({ name: 'minecraft-hunter-test', version: '1.0.0' });
+    const client = new Client({ name: 'minecraft-worker-test', version: '1.0.0' });
     await server.connect(serverTransport);
     await client.connect(clientTransport);
 
     const catalog = await client.listTools();
-    expect(catalog.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(['locate_animals', 'hunt_animals']));
+    expect(catalog.tools.map(tool => tool.name)).toEqual(
+      expect.arrayContaining(['locate_animals', 'hunt_animals', 'import_blueprint_url', 'execute_blueprint_batch']),
+    );
     const located = TextResultSchema.parse(
       await client.callTool({ name: 'locate_animals', arguments: { species: 'cow', max_distance: 16 } }),
     );

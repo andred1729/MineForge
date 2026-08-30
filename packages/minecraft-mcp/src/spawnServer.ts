@@ -149,7 +149,8 @@ export function startSpawnServer({
           `Minecraft /spawn${role === undefined ? '' : ` ${role}`} requested by ${input.requester_name} in ${input.world_name}.`,
         );
         const bot = await spawn(input);
-        writeText(response, 201, input.role === undefined ? bot.username : `${bot.username}:${bot.role}`);
+        const legacyResponse = input.requested_role !== undefined && input.role === undefined;
+        writeText(response, 201, legacyResponse ? bot.username : `${bot.username}:${bot.role}`);
       } catch (caught) {
         if (caught instanceof WorkforceCapacityError) {
           writeText(response, 409, caught.message);

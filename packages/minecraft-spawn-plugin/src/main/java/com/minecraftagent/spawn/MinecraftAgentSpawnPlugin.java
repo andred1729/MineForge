@@ -73,15 +73,10 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
       return true;
     }
     if (arguments.length > 1) {
-      requester.sendMessage("Usage: /spawn <role>");
+      requester.sendMessage("Usage: /spawn X");
       return true;
     }
-    Optional<BotRole> requestedRole =
-        arguments.length == 0 ? Optional.empty() : BotRole.parseCommand(arguments[0]);
-    if (arguments.length == 1 && requestedRole.isEmpty()) {
-      requester.sendMessage("Unknown ForgeBot role.");
-      return true;
-    }
+    Optional<BotRole> requestedRole = Optional.empty();
     if (requester.getWorld().getEnvironment() != World.Environment.NORMAL) {
       requester.sendMessage("ForgeBots can currently be spawned only in the Overworld.");
       return true;
@@ -306,6 +301,9 @@ public final class MinecraftAgentSpawnPlugin extends JavaPlugin {
     add(bot, Material.IRON_SWORD, 1);
     add(bot, Material.BAKED_POTATO, 16);
     switch (role) {
+      case GENERALIST -> {
+        // The console assignment determines the job; keep the initial kit neutral.
+      }
       case LUMBERJACK -> {
         add(bot, Material.OAK_SAPLING, 8);
       }

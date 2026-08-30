@@ -1,4 +1,4 @@
-import { BUILDER_DEMO_ORIGIN, demoWorksitesForRole } from './botRoles.js';
+import { knownTaskLocationsForRole, VILLA_BUILD_ORIGIN } from './botRoles.js';
 import { loadWorkforceConfig } from './config.js';
 import { BlueprintCatalog } from './grabcraftBlueprint.js';
 import { createMinecraftMcpServer, startMinecraftMcpHttpServer } from './mcpServer.js';
@@ -62,9 +62,9 @@ export async function main(): Promise<void> {
     prepareHelper: async ({ username, index }) => {
       await minecraftAdmin.setCreativeMode(username);
       await minecraftAdmin.teleport(username, {
-        x: BUILDER_DEMO_ORIGIN.x + 12 + index * 2,
-        y: BUILDER_DEMO_ORIGIN.y + 1,
-        z: BUILDER_DEMO_ORIGIN.z + 16,
+        x: VILLA_BUILD_ORIGIN.x + 12 + index * 2,
+        y: VILLA_BUILD_ORIGIN.y + 1,
+        z: VILLA_BUILD_ORIGIN.z + 16,
       });
     },
     createSessionClient: record =>
@@ -94,10 +94,10 @@ export async function main(): Promise<void> {
               actionQueue: context.actionQueue,
               role: context.record.role,
               blueprintCatalog,
-              additionalPlanOrigins: demoWorksitesForRole(context.record.role),
-              ...(context.record.role === 'builder'
+              additionalPlanOrigins: knownTaskLocationsForRole(context.record.role),
+              ...(context.record.role === 'builder' || context.record.role === 'generalist'
                 ? {
-                    recommendedBlueprintOrigin: { ...BUILDER_DEMO_ORIGIN },
+                    recommendedBlueprintOrigin: { ...VILLA_BUILD_ORIGIN },
                     enableCreativeMode: async () => {
                       await minecraftAdmin.setCreativeMode(context.record.username);
                     },
@@ -112,7 +112,7 @@ export async function main(): Promise<void> {
     host: config.spawnHost,
     port: config.spawnPort,
     token: config.spawnToken,
-    spawn: async request => await workforce.spawn(request.role ?? request.requested_role),
+    spawn: async () => await workforce.spawn(),
     rollback: async username => await workforce.rollback(username),
     ready: async username => await workforce.ready(username),
   });

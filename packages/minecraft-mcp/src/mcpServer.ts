@@ -177,7 +177,7 @@ export function createMinecraftMcpServer({
       await executeTool(() => ({
         observation: bot.inspect({ radius }),
         active_plan: planStore.current(),
-        configured_worksites: additionalPlanOrigins,
+        known_task_locations: additionalPlanOrigins,
       })),
   );
 
@@ -196,7 +196,7 @@ export function createMinecraftMcpServer({
       await executeTool(() => ({ trees: bot.locateNaturalTrees({ blockName, maxDistance }) })),
   );
 
-  if (role === 'hunter') {
+  if (role === 'hunter' || role === 'generalist') {
     server.registerTool(
       'locate_animals',
       {
@@ -468,7 +468,7 @@ export function createMinecraftMcpServer({
       }),
   );
 
-  if (role === 'hunter') {
+  if (role === 'hunter' || role === 'generalist') {
     server.registerTool(
       'hunt_animals',
       {

@@ -100,7 +100,7 @@ function managerOptions({
 }
 
 describe('Minecraft workforce manager', () => {
-  it('spawns a requested Builder first and attaches visible helper bodies', async () => {
+  it('spawns a blank generalist session and attaches helpers only after a build assignment', async () => {
     const identities: BotIdentity[] = [];
     const prepared: string[] = [];
     const options = managerOptions({
@@ -118,7 +118,20 @@ describe('Minecraft workforce manager', () => {
     const manager = new WorkforceManager(options);
     await manager.start();
 
-    await expect(manager.spawn('builder')).resolves.toMatchObject({ username: 'ForgeBot1', role: 'builder' });
+    const createUserTurn = vi.fn(async () => ({
+      id: 'turn',
+      status: 'done' as const,
+      hasRequiredActions: false,
+      responseText: null,
+    }));
+    options.createSessionClient = () => ({
+      latestTurn: async () => null,
+      createUserTurn,
+      cancelActiveTurn: async () => undefined,
+    });
+    await expect(manager.spawn()).resolves.toMatchObject({ username: 'ForgeBot1', role: 'generalist' });
+    await expect(manager.ready('ForgeBot1')).resolves.toBe(true);
+    expect(createUserTurn).not.toHaveBeenCalled();
     await expect(manager.spawnBuildHelpers('forgebot1', 2)).resolves.toEqual([
       { id: 'sub_agent1', username: 'sub_agent1' },
       { id: 'sub_agent2', username: 'sub_agent2' },
@@ -128,7 +141,7 @@ describe('Minecraft workforce manager', () => {
     await manager.close();
   });
 
-  it('serializes concurrent spawns into five unique role slots', async () => {
+  it('serializes concurrent spawns into five neutral workers', async () => {
     const identities: BotIdentity[] = [];
     const provisioner: TrueForgeProvisionerPort = {
       ensureProvider: async () => undefined,
@@ -144,11 +157,11 @@ describe('Minecraft workforce manager', () => {
     const spawned = await Promise.all(Array.from({ length: 5 }, async () => await manager.spawn()));
 
     expect(spawned.map(bot => [bot.username, bot.role])).toEqual([
-      ['ForgeBot1', 'lumberjack'],
-      ['ForgeBot2', 'miner'],
-      ['ForgeBot3', 'builder'],
-      ['ForgeBot4', 'hunter'],
-      ['ForgeBot5', 'scout'],
+      ['ForgeBot1', 'generalist'],
+      ['ForgeBot2', 'generalist'],
+      ['ForgeBot3', 'generalist'],
+      ['ForgeBot4', 'generalist'],
+      ['ForgeBot5', 'generalist'],
     ]);
     expect(new Set(identities.map(identity => identity.slug)).size).toBe(5);
     await expect(manager.spawn()).rejects.toBeInstanceOf(WorkforceCapacityError);
@@ -186,7 +199,7 @@ describe('Minecraft workforce manager', () => {
 
     expect(restoredRecords).toEqual(['session-1']);
     expect(restored.list()).toEqual([
-      expect.objectContaining({ username: 'ForgeBot1', role: 'lumberjack', sessionId: 'session-1' }),
+      expect.objectContaining({ username: 'ForgeBot1', role: 'generalist', sessionId: 'session-1' }),
     ]);
     await restored.close();
   });

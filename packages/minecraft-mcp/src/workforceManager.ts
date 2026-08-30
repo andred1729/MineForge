@@ -1,6 +1,6 @@
 import { MinecraftActionQueue } from './actionQueue.js';
 import type { MinecraftBotPort } from './botPort.js';
-import { createBotIdentity, roleActivationMessage, type BotIdentity, type BotRole } from './botRoles.js';
+import { createBotIdentity, type BotIdentity, type BotRole } from './botRoles.js';
 import { PlanStore } from './planStore.js';
 import type { TrueForgeSessionPort } from './trueforgePort.js';
 import type { TrueForgeProvisionerPort } from './trueforgeProvisioner.js';
@@ -39,7 +39,6 @@ export interface BuildWorkerContext {
 
 interface ActiveBot extends WorkforceBotContext {
   controller: SessionMirrorPort;
-  session: TrueForgeSessionPort;
 }
 
 export interface SessionMirrorPort {
@@ -151,8 +150,8 @@ export class WorkforceManager {
 
   async spawnBuildHelpers(ownerSlug: string, count: number): Promise<{ id: string; username: string }[]> {
     const owner = this.activeBots.get(ownerSlug);
-    if (owner?.record.role !== 'builder') {
-      throw new Error('Only an active Builder can spawn build helpers.');
+    if (owner === undefined || (owner.record.role !== 'builder' && owner.record.role !== 'generalist')) {
+      throw new Error('Only an active worker with building tools can spawn build helpers.');
     }
     if (!Number.isInteger(count) || count < 1 || count > 3) {
       throw new Error('A Builder may request between one and three helpers.');
@@ -266,16 +265,8 @@ export class WorkforceManager {
     return true;
   }
 
-  private async initializeSession(username: string): Promise<boolean> {
-    const active = [...this.activeBots.values()].find(entry => entry.record.username === username);
-    if (active === undefined) {
-      return false;
-    }
-    if ((await active.session.latestTurn()) !== null) {
-      return true;
-    }
-    await active.session.createUserTurn(roleActivationMessage(active.record));
-    return true;
+  private initializeSession(username: string): Promise<boolean> {
+    return Promise.resolve([...this.activeBots.values()].some(entry => entry.record.username === username));
   }
 
   private async activate({
@@ -305,14 +296,14 @@ export class WorkforceManager {
       const controller = this.options.createController({
         bot,
         session,
-        acceptMinecraftChat: identity.role === 'builder',
+        acceptMinecraftChat: false,
         onTurnCancelled: () => {
           planStore.invalidate();
           actionQueue.cancelActive();
         },
       });
       await controller.start();
-      const active: ActiveBot = { record, bot, planStore, actionQueue, controller, session };
+      const active: ActiveBot = { record, bot, planStore, actionQueue, controller };
       this.activeBots.set(identity.slug, active);
       console.log(
         `${identity.username} (${identity.role}) attached to ${this.options.consoleBaseUrl.replace(/\/$/, '')}/sessions/${record.sessionId}`,

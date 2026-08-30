@@ -5,6 +5,7 @@ import java.util.Locale;
 import java.util.Optional;
 
 enum BotRole {
+  GENERALIST("generalist", "worker", "Worker", 0),
   LUMBERJACK("lumberjack", "lumber-jack", "Lumberjack", 1),
   MINER("miner", "miner", "Miner", 2),
   BUILDER("builder", "builder", "Builder", 3),

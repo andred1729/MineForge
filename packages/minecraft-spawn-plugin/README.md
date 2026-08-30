@@ -1,6 +1,6 @@
 # Minecraft `/spawn` Paper plugin
 
-This server-only Paper plugin turns `/spawn <role>`—notably `/spawn builder`—into a request for the local Minecraft bot manager. No client mod is required.
+This server-only Paper plugin turns `/spawn X` into a request for a neutral worker. `X` is a player-facing label, not a specialization; the first TrueForge console prompt determines the worker's task. No client mod is required.
 
 ## Spawn control contract
 
@@ -22,22 +22,21 @@ y
 z
 yaw
 pitch
-requested_role
 ```
 
 The host bot manager is authoritative for capacity and identity allocation. It must reserve the lowest available name from `ForgeBot1` through `ForgeBot5`, create that bot's TrueForge connector, agent, and session, wait for the bot to join, and then return:
 
-- `201 text/plain` with exactly `ForgeBotN` on success.
+- `201 text/plain` with `ForgeBotN:generalist` on success.
 - `409` when five bots are already active.
 - Another non-2xx status when creation fails; it must release any reservation and disconnect partial bot state.
 
-The plugin performs the HTTP call off the Paper main thread. After success it returns to the main thread, finds safe natural ground near the request coordinates, teleports the bot, grants its role-specific demo kit, and applies the classic skin through SkinsRestorer.
+The plugin performs the HTTP call off the Paper main thread. After success it returns to the main thread, finds safe natural ground near the request coordinates, teleports the bot, grants a neutral starting kit, and applies the classic skin through SkinsRestorer. It then calls `/spawn/ready`; this confirms placement without creating a TrueForge turn, so every new session remains empty until the user writes the first prompt.
 
 Only one placement can be in flight at a time. If the bot cannot join, the world or natural ground is unavailable, or Paper rejects the teleport, the plugin sends an authenticated form POST to `/spawn/rollback` with `username=ForgeBotN`. The manager disconnects that latest bot, removes its durable workforce record, and makes the slot available again.
 
 ## Local configuration
 
-- `MINECRAFT_SPAWN_TOKEN` must match the host bot manager. The demo-only fallback is `minecraft-agent-local-demo`.
+- `MINECRAFT_SPAWN_TOKEN` must match the host bot manager. The local fallback is `minecraft-agent-local-demo`.
 - `MINECRAFT_SPAWN_URL` can override the host endpoint.
 - `MINECRAFT_BOT_SKIN` selects the cached SkinsRestorer skin name and defaults to `Steve`.
 

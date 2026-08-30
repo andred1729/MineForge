@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 final class BotIdentityTest {
   @Test
   void parsesTheBackendSelectedRoleIndependentlyFromTheBotSlot() {
+    assertEquals(BotRole.GENERALIST, BotIdentity.parse("ForgeBot1:generalist").orElseThrow().role());
     assertEquals(BotRole.HUNTER, BotIdentity.parse("ForgeBot1:hunter").orElseThrow().role());
     assertEquals(BotRole.LUMBERJACK, BotIdentity.parse("ForgeBot2:lumberjack\n").orElseThrow().role());
     assertEquals(BotRole.LUMBERJACK, BotRole.parseCommand("lumber-jack").orElseThrow());

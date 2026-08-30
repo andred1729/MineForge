@@ -1,58 +1,71 @@
-# Minecraft MCP bridge
+# MineForge: a TrueForge Harness Modification, reviewed by Qodo
 
-This private workspace package connects a Mineflayer bot to TrueForge through MCP. TrueForge owns the model loop, session, tool approval, streaming, and cancellation; this package implements bounded Minecraft observations and actions.
+MineForge connects AI workers in a Minecraft world to TrueForge. TrueForge runs the intelligence and conversation; the bridge translates approved agent decisions into bounded Minecraft actions. In this project we essentially created a custom Minecraft MCP and wired it to the MineForge console and harness.
 
-## Quick start
+Code is not the only thing agents / harness should be good at!
 
-Requirements: Node 22+, pnpm 11, Docker, and an OpenAI API key. This project uses `OPEN_AI_KEY` in the gitignored workspace `.env` (and accepts `OPENAI_API_KEY` as a compatibility fallback), then persists the credential in TrueForge's redacted provider store.
+## How it works
 
-```bash
-export OPEN_AI_KEY=your-key
-export MINECRAFT_MODEL_FQN=openai/gpt-5-4-mini
-pnpm minecraft:demo
+```mermaid
+flowchart LR
+  Player["Minecraft player"] --> Paper["Paper server<br/>spawn plugin"]
+  Paper --> Bridge["Minecraft bridge<br/>workforce manager"]
+  Bridge <--> Bot["Mineflayer bot"]
+  Bot <--> Paper
+
+  subgraph TrueForge["TrueForge Core"]
+    direction TB
+    UI["Web console"]
+    Runtime["Agent runtime<br/>model loop and tools"]
+    Sessions["Durable agents, sessions,<br/>turns, and history"]
+    Approval["Human approval<br/>and cancellation"]
+    Subagents["Subagent coordination"]
+
+    UI <--> Runtime
+    Runtime <--> Sessions
+    Runtime <--> Approval
+    Runtime <--> Subagents
+  end
+
+  Bridge -->|creates and restores workers| Sessions
+  Runtime -->|bot-scoped MCP tools| Bridge
+  Bot -->|player chat| Sessions
+  Runtime -->|progress and replies| Bot
 ```
 
-The command starts or reuses `minecraft-agent-server`, launches TrueForge and the Minecraft workforce manager, and installs the server-side `/spawn` command. Open:
+_TrueForge remains the harness and interface._ It owns the model loop, agent instructions, durable sessions, conversation history, tool approval, cancellation, and subagent coordination. _The Minecraft bridge does not run a separate agent loop._
 
-- TrueForge console: `http://localhost:3000`
-- Browser spectator: `http://127.0.0.1:3007`
-- Java Edition 1.21.4 multiplayer: `localhost:25565`
+The bridge owns the physical workforce. Each worker has:
 
-The Minecraft server is deliberately in offline mode and bound to localhost. Do not publish port 25565. In Minecraft, run `/spawn builder` to create a Builder with its own durable TrueForge agent and session. Player chat is serialized into that Builder session, so a player can paste a supported GrabCraft URL directly in Minecraft. The bot mirrors progress and final answers back into Minecraft chat.
+- one Mineflayer bot in Minecraft;
+- one TrueForge agent and durable session;
+- one private MCP route connected only to that bot;
+- one active plan boundary; and
+- one action queue that prevents overlapping world changes.
 
-`pnpm minecraft:server:reset` permanently removes only the `minecraft-agent-server` container and `minecraft-agent-world` Docker volume before recreating them on natural terrain. The separate `minecraft-agent-skins` volume is retained so the classic Steve skin remains cached.
+When a player runs `/spawn X`, the Paper plugin asks the bridge for a neutral worker. The bridge connects the bot, provisions an empty TrueForge session, and records the relationship so it can be restored after a restart. Paper then places the bot on safe ground with the same neutral starting kit. The user's first console prompt determines whether it gathers wood, hunts for food, or builds from a blueprint.
 
-If running components separately:
+TrueForge decides what each worker does from the user's console prompt, calls that worker's MCP tools, and sends progress or final replies back through Minecraft chat. Cancelling or failing a turn immediately stops the bot and invalidates its active plan.
 
-```bash
-pnpm minecraft:server:up
-pnpm standalone:dev
-pnpm minecraft:bridge
-```
+## Safe world actions
 
-The workforce manager provisions a connector, agent, and durable session when each `/spawn` succeeds. The server builds the small Paper command plugin in Docker, installs a pinned SkinsRestorer release, and keeps host ports bound to localhost. No client mod is required.
+World-changing work requires a human-approved plan. A plan limits which actions are allowed, how long authorization lasts, and how far the bot may travel or modify the world. Those limits are checked again while an action is running, not only when it begins.
 
-## Demo
+The bridge exposes bounded observation, movement, gathering, crafting, and building behavior. It does not expose unrestricted server commands, explosives, hostile combat, or arbitrary world mutation.
 
-Run `/spawn builder` in Minecraft, then paste a GrabCraft blueprint URL in normal chat. The Builder imports and inspects it through MCP. TrueForge pauses separately for visible creative mode, visible `sub_agentX` helper bodies, and the exact digest-bound build plan. The Builder then creates native TrueForge child threads and assigns their next deterministic batches to those bodies. Use the console stop control to cancel movement and invalidate the plan.
+## Building crews and blueprints
 
-The first slice intentionally excludes combat, explosives, arbitrary server commands, and sandboxes.
+A worker assigned a building task can import a supported GrabCraft design into a local blueprint catalog. The bridge validates and normalizes the design, removes unsupported blocks, calculates its material list, and gives the result an immutable digest.
 
-## Small Modern Villa demo
+Before construction, TrueForge separately asks for approval to enable creative mode, create visible helper bodies, and bind the build plan to the exact blueprint digest and location. TrueForge subagents coordinate the work, while the bridge routes deterministic batches to the lead bot or a helper.
 
-The complex-build demo imports GrabCraft's [Small Modern Villa](https://www.grabcraft.com/minecraft/small-modern-villa/modern-houses) into the local, gitignored `.data/blueprints` directory:
+Every target block is checked against the approved plan and the live Minecraft world. Already-correct blocks are skipped, so an interrupted batch can be retried safely.
 
-```sh
-pnpm minecraft:blueprint:import 'https://www.grabcraft.com/minecraft/small-modern-villa/modern-houses'
-pnpm minecraft:blueprint:fixture
-```
+## Responsibilities
 
-The importer discovers and validates the page's machine-readable render data. It never evaluates remote JavaScript. The normalized artifact records its source, author, dimensions, supported material bill, skipped materials, and an immutable digest.
-
-The demo imports orientation-independent terrain, structure, glazing, and hedge blocks. A support compiler removes any mapped voxel that cannot be placed against the prepared ground or an earlier operation. It also skips decorative landscaping and blocks that need exact facing, half, fluid, or multiblock placement. The exact supported and skipped counts are visible through `inspect_blueprint` before approval.
-
-The prepared site has inclusive outer corners `(2,64,0)` and `(34,64,32)`. The 32×32 villa uses corner origin `(2,64,0)` and leaves the final row and column as a one-block visual border. Ground landscaping is supplied by the flat site rather than rebuilt. Creative mode is never granted by the fixture: the bounded `enable_creative_mode` MCP tool runs only after its TrueForge approval. The world and human players remain in survival, and every villa block is still placed and verified through Mineflayer.
-
-TrueForge approves an immutable binding containing the blueprint id, digest, and origin once. The agent then calls `execute_blueprint_batch` from batch zero through completion. Repeating a partially completed batch is safe because the bridge checks the live block at every target.
-
-No extracted GrabCraft blueprint is committed to this repository. Re-run the import command when preparing a new local demo environment.
+| Component        | Responsibility                                                                          |
+| ---------------- | --------------------------------------------------------------------------------------- |
+| TrueForge        | Agent reasoning, sessions, approvals, cancellation, history, and subagents              |
+| Minecraft bridge | Bot lifecycle, MCP tools, plans, action queues, chat mirroring, and blueprint execution |
+| Paper plugin     | Player spawn requests, safe placement, starting kits, skins, and placement rollback     |
+| Minecraft server | Authoritative world state                                                               |

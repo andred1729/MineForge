@@ -5,7 +5,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 record BotIdentity(String username, int slot, BotRole role) {
-  private static final Pattern RESPONSE = Pattern.compile("(ForgeBot([1-5])):(lumberjack|miner|builder|hunter|scout)");
+  private static final Pattern RESPONSE =
+      Pattern.compile("(ForgeBot([1-5])):(generalist|lumberjack|miner|builder|hunter|scout)");
 
   static Optional<BotIdentity> parse(String responseBody) {
     String candidate = responseBody.trim();
