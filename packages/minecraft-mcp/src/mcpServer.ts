@@ -616,7 +616,7 @@ export function createMinecraftMcpServer({
           const plan = planStore.require({ planId, action: 'build' });
           const binding = plan.blueprint;
           if (binding?.blueprint_id !== blueprintId || binding.digest !== digest) {
-            throw new Error('Blueprint request does not match the exact artifact approved in begin_plan.');
+            throw new Error('Blueprint request does not match the exact artifact approved in begin_blueprint_plan.');
           }
           const blueprint = await blueprintCatalog.load(blueprintId);
           if (blueprint.digest !== digest) {
