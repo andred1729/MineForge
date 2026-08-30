@@ -1282,13 +1282,7 @@ export class MineflayerBot implements MinecraftBotPort {
     }
 
     for (const position of positions) {
-      await this.moveForBlueprintTarget({
-        target: position,
-        plan,
-        signal,
-        assertAuthorized,
-        allowStartOutsidePlan: true,
-      });
+      await this.moveForBlueprintTarget({ target: position, plan, signal, assertAuthorized });
       const placement = this.findPlacementReference(position);
       if (placement === null) {
         throw new Error(`Scaffolding lost its supporting face at ${position.toString()}.`);
@@ -1361,7 +1355,13 @@ export class MineflayerBot implements MinecraftBotPort {
   }): Promise<void> {
     const bot = this.requireBot();
     for (const position of [...positions].reverse()) {
-      await this.moveForBlueprintTarget({ target: position, plan, signal, assertAuthorized });
+      await this.moveForBlueprintTarget({
+        target: position,
+        plan,
+        signal,
+        assertAuthorized,
+        allowStartOutsidePlan: true,
+      });
       const scaffold = bot.blockAt(position);
       if (scaffold === null) {
         throw new Error(`Scaffold chunk is not loaded at ${position.toString()}.`);

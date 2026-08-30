@@ -248,7 +248,7 @@ describe('Mineflayer temporary scaffolding', () => {
     (subject as unknown as { bot: Bot }).bot = fakeBot;
     const internals = subject as unknown as {
       findPlacementReference(target: Vec3): { reference: { position: Vec3 }; face: Vec3 } | null;
-      moveForBlueprintTarget(): Promise<void>;
+      moveForBlueprintTarget(input: { allowStartOutsidePlan?: boolean }): Promise<void>;
       ensureBlueprintItem(): Promise<unknown>;
       placeTemporaryScaffoldColumn(input: {
         target: Vec3;
@@ -264,7 +264,7 @@ describe('Mineflayer temporary scaffolding', () => {
       }
       return null;
     });
-    vi.spyOn(internals, 'moveForBlueprintTarget').mockResolvedValue(undefined);
+    const move = vi.spyOn(internals, 'moveForBlueprintTarget').mockResolvedValue(undefined);
     vi.spyOn(internals, 'ensureBlueprintItem').mockResolvedValue({});
     const placedPositions: Vec3[] = [];
 
@@ -279,6 +279,7 @@ describe('Mineflayer temporary scaffolding', () => {
     ).rejects.toThrow('second scaffold failed');
 
     expect(placedPositions.map(position => position.toString())).toEqual([new Vec3(0, 64, 0).toString()]);
+    expect(move.mock.calls.every(call => call[0]?.allowStartOutsidePlan === undefined)).toBe(true);
   });
 
   it('rolls back partial scaffolds after cancellation without replacing the original failure', async () => {
@@ -391,7 +392,7 @@ describe('Mineflayer temporary scaffolding', () => {
     (subject as unknown as { bot: Bot }).bot = { blockAt } as unknown as Bot;
     const internals = subject as unknown as {
       rollbackTemporaryScaffolds(input: { positions: Vec3[]; plan: Plan }): Promise<void>;
-      moveForBlueprintTarget(): Promise<void>;
+      moveForBlueprintTarget(input: { allowStartOutsidePlan?: boolean }): Promise<void>;
     };
     const move = vi.spyOn(internals, 'moveForBlueprintTarget').mockImplementation(async () => {
       moveAttempts += 1;
@@ -410,6 +411,7 @@ describe('Mineflayer temporary scaffolding', () => {
 
     await internals.rollbackTemporaryScaffolds({ positions: [], plan: buildPlan });
     expect(move).toHaveBeenCalledTimes(2);
+    expect(move.mock.calls.every(call => call[0]?.allowStartOutsidePlan === true)).toBe(true);
     expect(blockAt).toHaveBeenCalledTimes(2);
   });
 });
