@@ -27,6 +27,7 @@ export function isPositionWithinPlanBounds({ plan, position }: { plan: Plan; pos
 
 export class PlanStore {
   private activePlan: Plan | null = null;
+  private nextBlueprintBatchIndex = 0;
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -56,6 +57,7 @@ export class PlanStore {
       ...('blueprint' in input ? { blueprint: input.blueprint } : {}),
     };
     this.activePlan = plan;
+    this.nextBlueprintBatchIndex = 0;
     return plan;
   }
 
@@ -63,6 +65,7 @@ export class PlanStore {
     const plan = this.activePlan;
     if (plan !== null && plan.expiresAt <= this.now()) {
       this.activePlan = null;
+      this.nextBlueprintBatchIndex = 0;
       return null;
     }
     return plan;
@@ -90,16 +93,49 @@ export class PlanStore {
     }
   }
 
+  blueprintBatchStatus({ planId, batchIndex }: { planId: string; batchIndex: number }): 'completed' | 'pending' {
+    const plan = this.require({ planId, action: 'build' });
+    if (plan.blueprint === undefined) {
+      throw new Error('The active approved plan is not bound to an imported blueprint.');
+    }
+    if (batchIndex < this.nextBlueprintBatchIndex) {
+      return 'completed';
+    }
+    if (batchIndex > this.nextBlueprintBatchIndex) {
+      throw new Error(
+        `Blueprint batches must run in dependency order. The next unfinished batch is ${String(this.nextBlueprintBatchIndex)}.`,
+      );
+    }
+    return 'pending';
+  }
+
+  blueprintBatchCursor(planId: string): number {
+    const plan = this.require({ planId, action: 'build' });
+    if (plan.blueprint === undefined) {
+      throw new Error('The active approved plan is not bound to an imported blueprint.');
+    }
+    return this.nextBlueprintBatchIndex;
+  }
+
+  completeBlueprintBatch({ planId, batchIndex }: { planId: string; batchIndex: number }): void {
+    const status = this.blueprintBatchStatus({ planId, batchIndex });
+    if (status === 'pending') {
+      this.nextBlueprintBatchIndex += 1;
+    }
+  }
+
   finish(planId: string): Plan {
     const plan = this.current();
     if (plan?.id !== planId) {
       throw new Error('Cannot finish a plan that is not active.');
     }
     this.activePlan = null;
+    this.nextBlueprintBatchIndex = 0;
     return plan;
   }
 
   invalidate(): void {
     this.activePlan = null;
+    this.nextBlueprintBatchIndex = 0;
   }
 }

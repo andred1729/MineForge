@@ -151,13 +151,16 @@ export async function runCreativeFlight({
   destination,
   signal,
   assertAuthorized,
+  keepFlying = false,
 }: {
   bot: Bot;
   destination: Vec3;
   signal: AbortSignal;
   assertAuthorized: () => void;
+  keepFlying?: boolean;
 }): Promise<void> {
   bot.creative.startFlying();
+  let arrived = false;
   try {
     let vector = destination.minus(bot.entity.position);
     let magnitude = vectorMagnitude(vector);
@@ -176,8 +179,11 @@ export async function runCreativeFlight({
     assertAuthorized();
     bot.entity.position = destination;
     await abortablePause(signal, 50);
+    arrived = true;
   } finally {
-    bot.creative.stopFlying();
+    if (!arrived || !keepFlying) {
+      bot.creative.stopFlying();
+    }
   }
 }
 
@@ -248,9 +254,61 @@ export async function runAbortable<T>({
   });
 }
 
+function withinMoveRange(position: Vec3, target: Position, range: number): boolean {
+  const dx = position.x - target.x;
+  const dy = position.y - target.y;
+  const dz = position.z - target.z;
+  return dx * dx + dy * dy + dz * dz <= range * range;
+}
+
+export async function navigateNear({
+  bot,
+  target,
+  range,
+}: {
+  bot: Bot;
+  target: Position;
+  range: number;
+}): Promise<void> {
+  if (withinMoveRange(bot.entity.position, target, range)) {
+    return;
+  }
+
+  let resolveProximity: (() => void) | undefined;
+  const proximity = new Promise<void>(resolve => {
+    resolveProximity = resolve;
+  });
+  const checkProximity = () => {
+    if (withinMoveRange(bot.entity.position, target, range)) {
+      resolveProximity?.();
+    }
+  };
+  bot.on('physicsTick', checkProximity);
+  const navigation = bot.pathfinder.goto(new goals.GoalNear(target.x, target.y, target.z, range));
+  try {
+    const outcome = await Promise.race([
+      navigation.then(() => 'goal' as const),
+      proximity.then(() => 'proximity' as const),
+    ]);
+    if (outcome === 'proximity') {
+      bot.pathfinder.stop();
+      try {
+        await navigation;
+      } catch (caught) {
+        if (!withinMoveRange(bot.entity.position, target, range)) {
+          throw caught;
+        }
+      }
+    }
+  } finally {
+    bot.removeListener('physicsTick', checkProximity);
+  }
+}
+
 export class MineflayerBot implements MinecraftBotPort {
   private bot: Bot | null = null;
   private creativeFlightActive = false;
+  private readonly pendingTemporaryScaffolds = new Map<string, { position: Vec3; plan: Plan }>();
   private readonly chatListeners = new Set<(event: { username: string; message: string }) => void>();
 
   constructor(private readonly options: MineflayerBotOptions) {}
@@ -474,7 +532,7 @@ export class MineflayerBot implements MinecraftBotPort {
       signal,
       assertAuthorized,
       navigate: async () => {
-        await bot.pathfinder.goto(new goals.GoalNear(target.x, target.y, target.z, range));
+        await navigateNear({ bot, target, range });
       },
     });
   }
@@ -565,13 +623,12 @@ export class MineflayerBot implements MinecraftBotPort {
         );
         if (droppedItem !== null) {
           try {
-            await this.runBoundedPathfinder({
+            await this.moveTo({
+              target: integerPosition(droppedItem.position),
+              range: 1.5,
               plan,
               signal,
               assertAuthorized,
-              navigate: async () => {
-                await bot.pathfinder.goto(new goals.GoalFollow(droppedItem, 0));
-              },
             });
           } catch (caught) {
             if (bot.inventory.count(itemType.id, null) <= itemCountBeforeDig) {
@@ -912,6 +969,9 @@ export class MineflayerBot implements MinecraftBotPort {
     assertAuthorized: () => void;
   }): Promise<ActionProgress> {
     const bot = this.requireBot();
+    if (this.pendingTemporaryScaffolds.size > 0) {
+      await this.rollbackTemporaryScaffolds({ positions: [], plan });
+    }
     const ordered = [...blocks].sort((left, right) => {
       if (left.block === 'air' && right.block !== 'air') {
         return -1;
@@ -924,72 +984,113 @@ export class MineflayerBot implements MinecraftBotPort {
     let completed = 0;
     const details: string[] = [];
 
-    for (const operation of ordered) {
-      if (signal.aborted) {
-        throw abortError();
-      }
-      assertAuthorized();
-      const target = new Vec3(origin.x + operation.dx, origin.y + operation.dy, origin.z + operation.dz);
-      let existing = bot.blockAt(target);
-      if (existing?.name === operation.block || (operation.block === 'air' && existing?.name === 'air')) {
-        completed += 1;
-        continue;
-      }
-
-      await this.moveForBlueprintTarget({ target, plan, signal, assertAuthorized });
-      existing = bot.blockAt(target);
-      if (existing === null) {
-        throw new Error(`Target chunk is not loaded at ${target.toString()}.`);
-      }
-      if (existing.name === operation.block || (operation.block === 'air' && existing.name === 'air')) {
-        completed += 1;
-        continue;
-      }
-      if (operation.block === 'air') {
-        if (existing.name === 'air') {
+    try {
+      for (const operation of ordered) {
+        if (signal.aborted) {
+          throw abortError();
+        }
+        assertAuthorized();
+        const target = new Vec3(origin.x + operation.dx, origin.y + operation.dy, origin.z + operation.dz);
+        let existing = bot.blockAt(target);
+        if (existing?.name === operation.block || (operation.block === 'air' && existing?.name === 'air')) {
           completed += 1;
           continue;
         }
-        assertAuthorized();
-        await runAbortable({
-          signal,
-          operation: async () => {
-            await bot.dig(existing);
-          },
-          stop: () => {
-            bot.stopDigging();
-          },
-        });
-      } else {
-        const item = await this.ensureBlueprintItem({ blockName: operation.block, signal, assertAuthorized });
-        assertAuthorized();
-        await runAbortable({
-          signal,
-          operation: async () => {
-            await bot.equip(item, 'hand');
-          },
-          stop: () => {
-            // Mineflayer exposes no equip cancellation; serialization waits for it to settle.
-          },
-        });
-        const placement = this.findPlacementReference(target);
-        if (placement === null) {
-          throw new Error(`No supporting face is available to place ${operation.block} at ${target.toString()}.`);
+
+        await this.moveForBlueprintTarget({ target, plan, signal, assertAuthorized });
+        existing = bot.blockAt(target);
+        if (existing === null) {
+          throw new Error(`Target chunk is not loaded at ${target.toString()}.`);
         }
-        assertAuthorized();
-        await runAbortable({
-          signal,
-          operation: async () => {
-            await bot.placeBlock(placement.reference, placement.face);
-          },
-          stop: () => {
-            bot.clearControlStates();
-          },
-        });
-        await waitForBlockName({ bot, target, expected: operation.block, signal });
+        if (existing.name === operation.block || (operation.block === 'air' && existing.name === 'air')) {
+          completed += 1;
+          continue;
+        }
+        if (operation.block === 'air') {
+          if (existing.name === 'air') {
+            completed += 1;
+            continue;
+          }
+          assertAuthorized();
+          await runAbortable({
+            signal,
+            operation: async () => {
+              await bot.dig(existing);
+            },
+            stop: () => {
+              bot.stopDigging();
+            },
+          });
+        } else {
+          const temporaryScaffolds: Vec3[] = [];
+          let operationFailure: Error | undefined;
+          try {
+            let placement = this.findPlacementReference(target);
+            if (placement === null) {
+              await this.placeTemporaryScaffoldColumn({
+                target,
+                plan,
+                signal,
+                assertAuthorized,
+                placedPositions: temporaryScaffolds,
+              });
+              await this.moveForBlueprintTarget({ target, plan, signal, assertAuthorized });
+              placement = this.findPlacementReference(target);
+            }
+            if (placement === null) {
+              throw new Error(`Temporary scaffolding could not support ${operation.block} at ${target.toString()}.`);
+            }
+            const item = await this.ensureBlueprintItem({ blockName: operation.block, signal, assertAuthorized });
+            assertAuthorized();
+            await runAbortable({
+              signal,
+              operation: async () => {
+                await bot.equip(item, 'hand');
+              },
+              stop: () => {
+                // Mineflayer exposes no equip cancellation; serialization waits for it to settle.
+              },
+            });
+            assertAuthorized();
+            await runAbortable({
+              signal,
+              operation: async () => {
+                await bot.placeBlock(placement.reference, placement.face);
+              },
+              stop: () => {
+                bot.clearControlStates();
+              },
+            });
+            await waitForBlockName({ bot, target, expected: operation.block, signal });
+          } catch (caught) {
+            operationFailure = caught instanceof Error ? caught : new Error('Minecraft blueprint placement failed.');
+          }
+          let cleanupFailure: Error | undefined;
+          if (temporaryScaffolds.length > 0) {
+            try {
+              await this.rollbackTemporaryScaffolds({ positions: temporaryScaffolds, plan });
+            } catch (caught) {
+              cleanupFailure = caught instanceof Error ? caught : new Error('Temporary scaffold cleanup failed.');
+              if (operationFailure !== undefined) {
+                console.warn('Could not completely roll back temporary Minecraft scaffolding.', cleanupFailure);
+              }
+            }
+          }
+          if (operationFailure !== undefined) {
+            throw operationFailure;
+          }
+          if (cleanupFailure !== undefined) {
+            throw cleanupFailure;
+          }
+        }
+        completed += 1;
+        details.push(`${operation.block} at ${target.toString()}`);
       }
-      completed += 1;
-      details.push(`${operation.block} at ${target.toString()}`);
+    } finally {
+      if (this.creativeFlightActive) {
+        bot.creative.stopFlying();
+        this.creativeFlightActive = false;
+      }
     }
 
     return { requested: blocks.length, completed, details };
@@ -1044,16 +1145,37 @@ export class MineflayerBot implements MinecraftBotPort {
     plan,
     signal,
     assertAuthorized,
+    allowStartOutsidePlan = false,
   }: {
     target: Vec3;
     plan: Plan;
     signal: AbortSignal;
     assertAuthorized: () => void;
+    allowStartOutsidePlan?: boolean;
   }): Promise<void> {
     const bot = this.requireBot();
     if (bot.game.gameMode !== 'creative') {
+      if (allowStartOutsidePlan) {
+        if (!isPositionWithinPlanBounds({ plan, position: integerPosition(target) })) {
+          throw new Error('Scaffold cleanup target is outside its original approved plan radius.');
+        }
+        await runAbortable({
+          signal,
+          operation: async () => {
+            await navigateNear({ bot, target: integerPosition(target), range: 3 });
+          },
+          stop: () => {
+            bot.pathfinder.stop();
+          },
+        });
+        return;
+      }
       await this.moveTo({ target: integerPosition(target), range: 3, plan, signal, assertAuthorized });
       return;
+    }
+
+    if (allowStartOutsidePlan && !isPositionWithinPlanBounds({ plan, position: integerPosition(target) })) {
+      throw new Error('Scaffold cleanup target is outside its original approved plan radius.');
     }
 
     const destination = new Vec3(target.x + 0.5, target.y + 2.5, target.z + 0.5);
@@ -1063,16 +1185,19 @@ export class MineflayerBot implements MinecraftBotPort {
       new Vec3(destination.x, cruisingY, destination.z),
       destination,
     ];
-    for (const waypoint of waypoints) {
+    for (const [index, waypoint] of waypoints.entries()) {
       assertAuthorized();
-      if (!isPositionWithinPlanBounds({ plan, position: integerPosition(waypoint) })) {
+      const isRecoveryStart = allowStartOutsidePlan && index === 0;
+      if (!isRecoveryStart && !isPositionWithinPlanBounds({ plan, position: integerPosition(waypoint) })) {
         throw new Error('Creative build flight would leave the approved plan radius.');
       }
-      this.creativeFlightActive = true;
       try {
-        await runCreativeFlight({ bot, destination: waypoint, signal, assertAuthorized });
-      } finally {
+        this.creativeFlightActive = true;
+        await runCreativeFlight({ bot, destination: waypoint, signal, assertAuthorized, keepFlying: true });
+      } catch (caught) {
+        bot.creative.stopFlying();
         this.creativeFlightActive = false;
+        throw caught;
       }
     }
   }
@@ -1117,6 +1242,151 @@ export class MineflayerBot implements MinecraftBotPort {
     return created;
   }
 
+  private async placeTemporaryScaffoldColumn({
+    target,
+    plan,
+    signal,
+    assertAuthorized,
+    placedPositions,
+  }: {
+    target: Vec3;
+    plan: Plan;
+    signal: AbortSignal;
+    assertAuthorized: () => void;
+    placedPositions: Vec3[];
+  }): Promise<void> {
+    const bot = this.requireBot();
+    const descending: Vec3[] = [];
+    let cursor = target.offset(0, -1, 0);
+    for (let depth = 0; depth < 16; depth += 1) {
+      if (!isPositionWithinPlanBounds({ plan, position: integerPosition(cursor) })) {
+        throw new Error('Temporary scaffolding would leave the approved plan radius.');
+      }
+      const existing = bot.blockAt(cursor);
+      if (existing === null) {
+        throw new Error(`Scaffold chunk is not loaded at ${cursor.toString()}.`);
+      }
+      if (existing.name !== 'air') {
+        throw new Error(`Temporary scaffolding is obstructed by ${existing.name} at ${cursor.toString()}.`);
+      }
+      descending.push(cursor.clone());
+      if (this.findPlacementReference(cursor) !== null) {
+        break;
+      }
+      cursor = cursor.offset(0, -1, 0);
+    }
+    const positions = descending.reverse();
+    const foundation = positions[0];
+    if (foundation === undefined || this.findPlacementReference(foundation) === null) {
+      throw new Error(`No scaffold foundation is available below ${target.toString()}.`);
+    }
+
+    for (const position of positions) {
+      await this.moveForBlueprintTarget({ target: position, plan, signal, assertAuthorized });
+      const placement = this.findPlacementReference(position);
+      if (placement === null) {
+        throw new Error(`Scaffolding lost its supporting face at ${position.toString()}.`);
+      }
+      const item = await this.ensureBlueprintItem({ blockName: 'scaffolding', signal, assertAuthorized });
+      assertAuthorized();
+      try {
+        await runAbortable({
+          signal,
+          operation: async () => {
+            await bot.equip(item, 'hand');
+            await bot.placeBlock(placement.reference, placement.face);
+          },
+          stop: () => {
+            bot.clearControlStates();
+          },
+        });
+        await waitForBlockName({ bot, target: position, expected: 'scaffolding', signal });
+      } finally {
+        if (bot.blockAt(position)?.name === 'scaffolding' && !placedPositions.some(placed => placed.equals(position))) {
+          placedPositions.push(position.clone());
+        }
+      }
+    }
+  }
+
+  private async rollbackTemporaryScaffolds({ positions, plan }: { positions: Vec3[]; plan: Plan }): Promise<void> {
+    for (const position of positions) {
+      this.pendingTemporaryScaffolds.set(position.toString(), { position: position.clone(), plan });
+    }
+
+    const failures: Error[] = [];
+    for (const [key, pending] of [...this.pendingTemporaryScaffolds.entries()].reverse()) {
+      const cleanupController = new AbortController();
+      const cleanupTimeout = setTimeout(() => {
+        cleanupController.abort();
+      }, 10_000);
+      try {
+        await this.removeTemporaryScaffolds({
+          positions: [pending.position],
+          plan: pending.plan,
+          signal: cleanupController.signal,
+          assertAuthorized: () => undefined,
+        });
+        this.pendingTemporaryScaffolds.delete(key);
+      } catch (caught) {
+        failures.push(caught instanceof Error ? caught : new Error(`Could not remove scaffold at ${key}.`));
+      } finally {
+        clearTimeout(cleanupTimeout);
+      }
+    }
+    if (failures.length > 0) {
+      throw new Error(
+        `Could not remove ${String(failures.length)} temporary scaffold block(s); cleanup will retry before the next blueprint batch.`,
+        { cause: failures[0] },
+      );
+    }
+  }
+
+  private async removeTemporaryScaffolds({
+    positions,
+    plan,
+    signal,
+    assertAuthorized,
+  }: {
+    positions: Vec3[];
+    plan: Plan;
+    signal: AbortSignal;
+    assertAuthorized: () => void;
+  }): Promise<void> {
+    const bot = this.requireBot();
+    for (const position of [...positions].reverse()) {
+      const allowStartOutsidePlan = !isPositionWithinPlanBounds({
+        plan,
+        position: integerPosition(bot.entity.position),
+      });
+      await this.moveForBlueprintTarget({
+        target: position,
+        plan,
+        signal,
+        assertAuthorized,
+        allowStartOutsidePlan,
+      });
+      const scaffold = bot.blockAt(position);
+      if (scaffold === null) {
+        throw new Error(`Scaffold chunk is not loaded at ${position.toString()}.`);
+      }
+      if (scaffold.name !== 'scaffolding') {
+        continue;
+      }
+      assertAuthorized();
+      await runAbortable({
+        signal,
+        operation: async () => {
+          await bot.dig(scaffold);
+        },
+        stop: () => {
+          bot.stopDigging();
+        },
+      });
+      await waitForBlockName({ bot, target: position, expected: 'air', signal });
+    }
+  }
+
   async say(message: string): Promise<void> {
     const bot = this.requireBot();
     for (const part of splitChatMessage(message)) {
@@ -1150,7 +1420,22 @@ export class MineflayerBot implements MinecraftBotPort {
     const bot = this.requireBot();
     await wait({ milliseconds: 200, signal });
     assertAuthorized();
-    await this.moveTo({ target, range: 1, plan, signal, assertAuthorized });
+    if (bot.inventory.count(itemTypeId, null) - previousCount < expectedIncrease) {
+      const droppedItem = bot.nearestEntity(
+        entity =>
+          entity.name === 'item' &&
+          entity.position.distanceTo(new Vec3(target.x, target.y, target.z)) <= 6 &&
+          isPositionWithinPlanBounds({ plan, position: integerPosition(entity.position) }),
+      );
+      const pickupTarget = droppedItem === null ? target : integerPosition(droppedItem.position);
+      await this.moveTo({
+        target: pickupTarget,
+        range: droppedItem === null ? 2 : 1.5,
+        plan,
+        signal,
+        assertAuthorized,
+      });
+    }
     const deadline = Date.now() + 3_500;
     while (bot.inventory.count(itemTypeId, null) - previousCount < expectedIncrease && Date.now() < deadline) {
       assertAuthorized();

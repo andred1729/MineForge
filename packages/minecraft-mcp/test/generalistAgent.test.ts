@@ -12,11 +12,10 @@ describe('generalist TrueForge agent', () => {
     expect(identity.role).toBe('generalist');
     expect(manifest.mcpServers?.[0]?.requireApprovalForTools).toEqual([
       'enable_creative_mode',
-      'spawn_build_helpers',
       'begin_plan',
       'begin_blueprint_plan',
     ]);
-    expect(manifest.config?.dynamicSubAgents).toEqual({ enabled: true });
+    expect(manifest.config?.dynamicSubAgents).toEqual({ enabled: false });
   });
 
   it('describes nearby trees naturally without exposing demo terminology', () => {
