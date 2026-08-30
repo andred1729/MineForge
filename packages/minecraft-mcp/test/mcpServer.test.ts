@@ -468,6 +468,20 @@ describe('Minecraft MCP server', () => {
           ],
         }),
       );
+      const repeated = TextResultSchema.parse(
+        await client.callTool({
+          name: 'execute_blueprint_batch',
+          arguments: {
+            plan_id: plan.id,
+            blueprint_id: blueprint.id,
+            digest: blueprint.digest,
+            batch_index: 0,
+            worker_id: 'lead',
+          },
+        }),
+      );
+      expect(JSON.parse(firstText(repeated))).toMatchObject({ already_completed: true, batch_index: 0 });
+      expect(executeBlueprint).toHaveBeenCalledOnce();
     } finally {
       await client.close();
       await server.close();

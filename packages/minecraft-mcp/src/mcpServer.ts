@@ -596,6 +596,21 @@ export function createMinecraftMcpServer({
             .slice(batchIndex * BLUEPRINT_BATCH_SIZE, (batchIndex + 1) * BLUEPRINT_BATCH_SIZE)
             .map(({ dx, dy, dz, block }) => ({ dx, dy, dz, block }));
           validateBlueprint({ planStore, planId, origin: binding.origin, blocks: batch });
+          const batchStatus = planStore.blueprintBatchStatus({ planId, batchIndex });
+          if (batchStatus === 'completed') {
+            return {
+              requested: batch.length,
+              completed: batch.length,
+              details: [`Blueprint batch ${String(batchIndex)} was already completed.`],
+              blueprint_id: blueprintId,
+              digest,
+              batch_index: batchIndex,
+              batch_count: batchCount,
+              next_batch_index: batchIndex + 1 < batchCount ? batchIndex + 1 : null,
+              worker_id: workerId,
+              already_completed: true,
+            };
+          }
           const progress = await worker.bot.executeBlueprint({
             origin: binding.origin,
             blocks: batch,
@@ -603,13 +618,17 @@ export function createMinecraftMcpServer({
             signal: activeSignal,
             assertAuthorized: () => planStore.require({ planId, action: 'build' }),
           });
+          if (progress.completed === batch.length) {
+            planStore.completeBlueprintBatch({ planId, batchIndex });
+          }
           return {
             ...progress,
             blueprint_id: blueprintId,
             digest,
             batch_index: batchIndex,
             batch_count: batchCount,
-            next_batch_index: batchIndex + 1 < batchCount ? batchIndex + 1 : null,
+            next_batch_index:
+              progress.completed === batch.length ? (batchIndex + 1 < batchCount ? batchIndex + 1 : null) : batchIndex,
             worker_id: workerId,
           };
         },

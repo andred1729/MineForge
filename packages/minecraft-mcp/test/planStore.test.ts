@@ -58,4 +58,29 @@ describe('PlanStore', () => {
     expect(isPositionWithinPlanBounds({ plan, position: { x: 20, y: 64, z: 9 } })).toBe(false);
     expect(isPositionWithinPlanBounds({ plan, position: { x: 49, y: 66, z: 0 } })).toBe(false);
   });
+
+  it('enforces imported blueprint batch order while allowing completed retries', () => {
+    const store = new PlanStore();
+    const plan = store.begin({
+      input: {
+        summary: 'Build an imported villa',
+        steps: ['Build each batch in order'],
+        permitted_actions: ['build'],
+        duration_minutes: 15,
+        radius_blocks: 32,
+        blueprint: {
+          blueprint_id: 'villa',
+          digest: 'a'.repeat(64),
+          origin: { x: 0, y: 64, z: 0 },
+        },
+      },
+      origin: { x: 0, y: 64, z: 0 },
+    });
+
+    expect(() => store.blueprintBatchStatus({ planId: plan.id, batchIndex: 1 })).toThrow('next unfinished batch is 0');
+    expect(store.blueprintBatchStatus({ planId: plan.id, batchIndex: 0 })).toBe('pending');
+    store.completeBlueprintBatch({ planId: plan.id, batchIndex: 0 });
+    expect(store.blueprintBatchStatus({ planId: plan.id, batchIndex: 0 })).toBe('completed');
+    expect(store.blueprintBatchStatus({ planId: plan.id, batchIndex: 1 })).toBe('pending');
+  });
 });
