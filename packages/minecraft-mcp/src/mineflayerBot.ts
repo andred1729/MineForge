@@ -1145,16 +1145,37 @@ export class MineflayerBot implements MinecraftBotPort {
     plan,
     signal,
     assertAuthorized,
+    allowStartOutsidePlan = false,
   }: {
     target: Vec3;
     plan: Plan;
     signal: AbortSignal;
     assertAuthorized: () => void;
+    allowStartOutsidePlan?: boolean;
   }): Promise<void> {
     const bot = this.requireBot();
     if (bot.game.gameMode !== 'creative') {
+      if (allowStartOutsidePlan) {
+        if (!isPositionWithinPlanBounds({ plan, position: integerPosition(target) })) {
+          throw new Error('Scaffold cleanup target is outside its original approved plan radius.');
+        }
+        await runAbortable({
+          signal,
+          operation: async () => {
+            await navigateNear({ bot, target: integerPosition(target), range: 3 });
+          },
+          stop: () => {
+            bot.pathfinder.stop();
+          },
+        });
+        return;
+      }
       await this.moveTo({ target: integerPosition(target), range: 3, plan, signal, assertAuthorized });
       return;
+    }
+
+    if (allowStartOutsidePlan && !isPositionWithinPlanBounds({ plan, position: integerPosition(target) })) {
+      throw new Error('Scaffold cleanup target is outside its original approved plan radius.');
     }
 
     const destination = new Vec3(target.x + 0.5, target.y + 2.5, target.z + 0.5);
@@ -1164,9 +1185,10 @@ export class MineflayerBot implements MinecraftBotPort {
       new Vec3(destination.x, cruisingY, destination.z),
       destination,
     ];
-    for (const waypoint of waypoints) {
+    for (const [index, waypoint] of waypoints.entries()) {
       assertAuthorized();
-      if (!isPositionWithinPlanBounds({ plan, position: integerPosition(waypoint) })) {
+      const isRecoveryStart = allowStartOutsidePlan && index === 0;
+      if (!isRecoveryStart && !isPositionWithinPlanBounds({ plan, position: integerPosition(waypoint) })) {
         throw new Error('Creative build flight would leave the approved plan radius.');
       }
       try {
@@ -1260,7 +1282,13 @@ export class MineflayerBot implements MinecraftBotPort {
     }
 
     for (const position of positions) {
-      await this.moveForBlueprintTarget({ target: position, plan, signal, assertAuthorized });
+      await this.moveForBlueprintTarget({
+        target: position,
+        plan,
+        signal,
+        assertAuthorized,
+        allowStartOutsidePlan: true,
+      });
       const placement = this.findPlacementReference(position);
       if (placement === null) {
         throw new Error(`Scaffolding lost its supporting face at ${position.toString()}.`);

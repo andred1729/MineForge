@@ -187,6 +187,41 @@ describe('Mineflayer temporary scaffolding', () => {
     expiresAt: Number.MAX_SAFE_INTEGER,
   };
 
+  it('can return from outside an old plan to a bounded cleanup target', async () => {
+    const subject = new MineflayerBot({
+      host: '127.0.0.1',
+      port: 25565,
+      username: 'ForgeBot1',
+      version: '1.21.4',
+    });
+    const fakeBot = {
+      game: { gameMode: 'creative' },
+      entity: { position: new Vec3(9, 64, 0), velocity: new Vec3(0, 0, 0) },
+      physics: { gravity: 0.08 },
+      creative: { startFlying: vi.fn(), stopFlying: vi.fn() },
+    } as unknown as Bot;
+    (subject as unknown as { bot: Bot }).bot = fakeBot;
+    const internals = subject as unknown as {
+      moveForBlueprintTarget(input: {
+        target: Vec3;
+        plan: Plan;
+        signal: AbortSignal;
+        assertAuthorized: () => void;
+        allowStartOutsidePlan: boolean;
+      }): Promise<void>;
+    };
+
+    await internals.moveForBlueprintTarget({
+      target: new Vec3(8, 64, 0),
+      plan: { ...buildPlan, radiusBlocks: 8 },
+      signal: new AbortController().signal,
+      assertAuthorized: () => undefined,
+      allowStartOutsidePlan: true,
+    });
+
+    expect(fakeBot.entity.position).toEqual(new Vec3(8.5, 66.5, 0.5));
+  });
+
   it('records each confirmed scaffold before a later column placement fails', async () => {
     const subject = new MineflayerBot({
       host: '127.0.0.1',
