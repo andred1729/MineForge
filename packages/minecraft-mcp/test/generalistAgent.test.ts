@@ -24,6 +24,7 @@ describe('generalist TrueForge agent', () => {
 
     expect(instructions).toContain('There are natural trees around (-46, 66, -6)');
     expect(instructions).toContain('you will go there and cut them');
+    expect(instructions).toContain('call move_to for those coordinates before calling harvest_tree');
     expect(instructions.toLowerCase()).not.toContain('worksite');
     expect(instructions.toLowerCase()).not.toContain('demo');
     expect(instructions).not.toContain('a generalist embodied');
