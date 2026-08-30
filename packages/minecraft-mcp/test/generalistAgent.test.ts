@@ -14,6 +14,7 @@ describe('generalist TrueForge agent', () => {
       'enable_creative_mode',
       'spawn_build_helpers',
       'begin_plan',
+      'begin_blueprint_plan',
     ]);
     expect(manifest.config?.dynamicSubAgents).toEqual({ enabled: true });
   });

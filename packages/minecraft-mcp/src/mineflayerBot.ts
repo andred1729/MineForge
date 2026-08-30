@@ -1,4 +1,3 @@
-import { once } from 'node:events';
 import { createServer } from 'node:net';
 
 import mineflayer, { type Bot } from 'mineflayer';
@@ -30,6 +29,7 @@ interface MineflayerBotOptions {
 
 const { goals, Movements, pathfinder } = pathfinderPlugin;
 const { mineflayer: startMineflayerViewer } = prismarineViewer;
+const BOT_SPAWN_TIMEOUT_MS = 15_000;
 
 function integerPosition(position: Vec3): Position {
   return {
@@ -41,6 +41,50 @@ function integerPosition(position: Vec3): Position {
 
 function abortError(): Error {
   return new Error('Minecraft action was cancelled.');
+}
+
+export async function waitForBotSpawn(bot: Bot, username: string, timeoutMs = BOT_SPAWN_TIMEOUT_MS): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timeout);
+      bot.removeListener('spawn', handleSpawn);
+      bot.removeListener('error', handleError);
+      bot.removeListener('kicked', handleKicked);
+      bot.removeListener('end', handleEnd);
+    };
+    const finish = (error?: Error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      if (error === undefined) {
+        resolve();
+      } else {
+        reject(error);
+      }
+    };
+    const handleSpawn = () => {
+      finish();
+    };
+    const handleError = (error: Error) => {
+      finish(error);
+    };
+    const handleKicked = (reason: unknown) => {
+      finish(new Error(`${username} was kicked before spawning: ${String(reason)}`));
+    };
+    const handleEnd = (reason: string) => {
+      finish(new Error(`${username} disconnected before spawning: ${reason}`));
+    };
+    const timeout = setTimeout(() => {
+      finish(new Error(`${username} did not spawn within ${String(timeoutMs / 1_000)} seconds.`));
+    }, timeoutMs);
+    bot.once('spawn', handleSpawn);
+    bot.once('error', handleError);
+    bot.once('kicked', handleKicked);
+    bot.once('end', handleEnd);
+  });
 }
 
 function assertNotAborted(signal: AbortSignal): void {
@@ -224,18 +268,13 @@ export class MineflayerBot implements MinecraftBotPort {
         listener({ username, message });
       }
     });
+    bot.on('error', error => {
+      console.warn(`${this.options.username} Minecraft connection error`, error);
+    });
     this.bot = bot;
 
     try {
-      await Promise.race([
-        once(bot, 'spawn'),
-        once(bot, 'error').then(([error]) => {
-          if (error instanceof Error) {
-            throw error;
-          }
-          throw new Error('Mineflayer failed before spawning.');
-        }),
-      ]);
+      await waitForBotSpawn(bot, this.options.username);
       const movements = new Movements(bot);
       // Pathfinding is navigation only. World mutation must happen through the
       // explicitly authorized gather/build loops so it can be counted and stopped.

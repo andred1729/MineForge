@@ -9,7 +9,14 @@ import { z } from 'zod';
 import { MinecraftActionQueue } from './actionQueue.js';
 import type { MinecraftBotPort } from './botPort.js';
 import type { BotRole } from './botRoles.js';
-import { BeginPlanInputSchema, BlueprintSchema, PlanOutcomeSchema, PositionSchema, type Position } from './domain.js';
+import {
+  BeginBlueprintPlanInputSchema,
+  BeginPlanInputSchema,
+  BlueprintSchema,
+  PlanOutcomeSchema,
+  PositionSchema,
+  type Position,
+} from './domain.js';
 import { BlueprintCatalog, importGrabcraftBlueprint, type ImportedBlueprint } from './grabcraftBlueprint.js';
 import { HuntSpeciesSchema } from './hunting.js';
 import { PlanStore } from './planStore.js';
@@ -337,32 +344,47 @@ export function createMinecraftMcpServer({
     'begin_plan',
     {
       description:
-        'Request human approval for one bounded Minecraft plan. Call this before every state-changing action and wait for the returned plan_id.',
+        'Request human approval for a bounded movement, gathering, crafting, hunting, dropping, or small model-supplied build plan. This tool has no imported-blueprint fields.',
       inputSchema: BeginPlanInputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     async input =>
       await executeTool(async () => {
         const additionalOrigins = additionalPlanOrigins.map(({ x, y, z }) => ({ x, y, z }));
-        if (input.blueprint !== undefined) {
-          const blueprint = await blueprintCatalog.load(input.blueprint.blueprint_id);
-          if (blueprint.digest !== input.blueprint.digest) {
-            throw new Error('Blueprint digest does not match the imported artifact. Inspect it again before approval.');
-          }
-          const prospectivePlan = {
-            id: 'prospective',
-            summary: input.summary,
-            steps: input.steps,
-            permittedActions: input.permitted_actions,
-            origin: bot.position(),
-            additionalOrigins,
-            radiusBlocks: input.radius_blocks,
-            createdAt: 0,
-            expiresAt: Number.MAX_SAFE_INTEGER,
-            blueprint: input.blueprint,
-          };
-          validateImportedBlueprintBounds({ planStore, plan: prospectivePlan, blueprint });
+        const plan = planStore.begin({ input, origin: bot.position(), additionalOrigins });
+        await bot.say(`Approved plan started: ${plan.summary}`);
+        return { plan };
+      }),
+  );
+
+  server.registerTool(
+    'begin_blueprint_plan',
+    {
+      description:
+        'Request human approval for an imported complex blueprint. Use only after import_blueprint_url and inspect_blueprint; the exact blueprint ID, digest, and origin are required.',
+      inputSchema: BeginBlueprintPlanInputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    },
+    async input =>
+      await executeTool(async () => {
+        const additionalOrigins = additionalPlanOrigins.map(({ x, y, z }) => ({ x, y, z }));
+        const blueprint = await blueprintCatalog.load(input.blueprint.blueprint_id);
+        if (blueprint.digest !== input.blueprint.digest) {
+          throw new Error('Blueprint digest does not match the imported artifact. Inspect it again before approval.');
         }
+        const prospectivePlan = {
+          id: 'prospective',
+          summary: input.summary,
+          steps: input.steps,
+          permittedActions: input.permitted_actions,
+          origin: bot.position(),
+          additionalOrigins,
+          radiusBlocks: input.radius_blocks,
+          createdAt: 0,
+          expiresAt: Number.MAX_SAFE_INTEGER,
+          blueprint: input.blueprint,
+        };
+        validateImportedBlueprintBounds({ planStore, plan: prospectivePlan, blueprint });
         const plan = planStore.begin({ input, origin: bot.position(), additionalOrigins });
         await bot.say(`Approved plan started: ${plan.summary}`);
         return { plan };

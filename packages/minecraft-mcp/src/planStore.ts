@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { Action, BeginPlanInput, Plan, Position } from './domain.js';
+import type { Action, BeginBlueprintPlanInput, BeginPlanInput, Plan, Position } from './domain.js';
 
 export function isPositionWithinPlanBounds({ plan, position }: { plan: Plan; position: Position }): boolean {
   const distanceToSegment = (end: Position): number => {
@@ -35,7 +35,7 @@ export class PlanStore {
     origin,
     additionalOrigins = [],
   }: {
-    input: BeginPlanInput;
+    input: BeginPlanInput | BeginBlueprintPlanInput;
     origin: Position;
     additionalOrigins?: Position[];
   }): Plan {
@@ -53,7 +53,7 @@ export class PlanStore {
       radiusBlocks: input.radius_blocks,
       createdAt,
       expiresAt: createdAt + input.duration_minutes * 60_000,
-      blueprint: input.blueprint,
+      ...('blueprint' in input ? { blueprint: input.blueprint } : {}),
     };
     this.activePlan = plan;
     return plan;

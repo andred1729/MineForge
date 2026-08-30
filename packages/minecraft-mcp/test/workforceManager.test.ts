@@ -111,7 +111,19 @@ describe('Minecraft workforce manager', () => {
       },
       identities,
     });
-    options.createHelperBot = username => fakeBot({ username });
+    let secondHelperAttempts = 0;
+    options.createHelperBot = username => {
+      const bot = fakeBot({ username });
+      if (username === 'sub_agent2') {
+        secondHelperAttempts += 1;
+        if (secondHelperAttempts === 1) {
+          bot.start = vi.fn(async () => {
+            throw new Error('Connection ended before spawn.');
+          });
+        }
+      }
+      return bot;
+    };
     options.prepareHelper = async ({ username }) => {
       prepared.push(username);
     };
@@ -137,6 +149,7 @@ describe('Minecraft workforce manager', () => {
       { id: 'sub_agent2', username: 'sub_agent2' },
     ]);
     expect(prepared).toEqual(['sub_agent1', 'sub_agent2']);
+    expect(secondHelperAttempts).toBe(2);
     expect(manager.resolveBuildWorker('forgebot1', 'sub_agent2')).toMatchObject({ username: 'sub_agent2' });
     await manager.close();
   });

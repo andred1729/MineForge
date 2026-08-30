@@ -1,9 +1,11 @@
+import { EventEmitter } from 'node:events';
+
 import type { Bot } from 'mineflayer';
 import { Vec3 } from 'vec3';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Plan, Position } from '../src/domain.js';
-import { MineflayerBot, runAbortable, runCreativeFlight } from '../src/mineflayerBot.js';
+import { MineflayerBot, runAbortable, runCreativeFlight, waitForBotSpawn } from '../src/mineflayerBot.js';
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
   let resolvePromise: () => void = () => {};
@@ -12,6 +14,26 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
   });
   return { promise, resolve: resolvePromise };
 }
+
+describe('Mineflayer startup', () => {
+  it('rejects when Minecraft disconnects before spawn', async () => {
+    const events = new EventEmitter();
+    const spawned = waitForBotSpawn(events as unknown as Bot, 'sub_agent2', 1_000);
+    events.emit('end', 'socketClosed');
+
+    await expect(spawned).rejects.toThrow('sub_agent2 disconnected before spawning');
+  });
+
+  it('times out instead of leaving an MCP helper request pending forever', async () => {
+    vi.useFakeTimers();
+    const events = new EventEmitter();
+    const spawned = waitForBotSpawn(events as unknown as Bot, 'sub_agent2', 1_000);
+    const assertion = expect(spawned).rejects.toThrow('did not spawn within 1 seconds');
+    await vi.advanceTimersByTimeAsync(1_000);
+    await assertion;
+    vi.useRealTimers();
+  });
+});
 
 describe('Mineflayer cancellation', () => {
   it('does not release a cancelled craft or placement wrapper before the operation settles', async () => {

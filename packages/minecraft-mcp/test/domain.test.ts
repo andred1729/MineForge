@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { BeginPlanInputSchema } from '../src/domain.js';
+import { BeginBlueprintPlanInputSchema, BeginPlanInputSchema } from '../src/domain.js';
 
 describe('Minecraft plan input', () => {
   it('keeps imported and ordinary plans within the same 15-minute authorization window', () => {
@@ -13,7 +13,7 @@ describe('Minecraft plan input', () => {
     };
     expect(BeginPlanInputSchema.safeParse(ordinary).success).toBe(false);
     expect(
-      BeginPlanInputSchema.safeParse({
+      BeginBlueprintPlanInputSchema.safeParse({
         ...ordinary,
         blueprint: {
           blueprint_id: 'test-villa',
@@ -22,5 +22,10 @@ describe('Minecraft plan input', () => {
         },
       }).success,
     ).toBe(false);
+  });
+
+  it('keeps imported-blueprint fields out of ordinary plans', () => {
+    expect(BeginPlanInputSchema.keyof().options).not.toContain('blueprint');
+    expect(BeginBlueprintPlanInputSchema.keyof().options).toContain('blueprint');
   });
 });

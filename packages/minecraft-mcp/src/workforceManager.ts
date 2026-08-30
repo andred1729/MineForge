@@ -154,7 +154,7 @@ export class WorkforceManager {
       throw new Error('Only an active worker with building tools can spawn build helpers.');
     }
     if (!Number.isInteger(count) || count < 1 || count > 3) {
-      throw new Error('A Builder may request between one and three helpers.');
+      throw new Error('A worker may request between one and three build helpers.');
     }
     if (this.options.createHelperBot === undefined) {
       throw new Error('Build helpers are not configured for this bridge.');
@@ -166,16 +166,8 @@ export class WorkforceManager {
       if (crew.has(id)) {
         continue;
       }
-      const bot = this.options.createHelperBot(id);
-      try {
-        await bot.start();
-        await this.options.prepareHelper?.({ id, username: id, index });
-        crew.set(id, { id, username: id, bot, actionQueue: new MinecraftActionQueue() });
-      } catch (caught) {
-        bot.stop();
-        await bot.close();
-        throw new Error(`Could not spawn visible helper ${id}.`, { cause: caught });
-      }
+      const bot = await this.startBuildHelper({ id, index });
+      crew.set(id, { id, username: id, bot, actionQueue: new MinecraftActionQueue() });
     }
     return [...crew.values()].slice(0, count).map(({ id, username }) => ({ id, username }));
   }
@@ -209,6 +201,29 @@ export class WorkforceManager {
         await entry.bot.close();
       }),
     );
+  }
+
+  private async startBuildHelper({ id, index }: { id: string; index: number }): Promise<ManagedMinecraftBot> {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const bot = this.options.createHelperBot?.(id);
+      if (bot === undefined) {
+        throw new Error('Build helpers are not configured for this bridge.');
+      }
+      try {
+        await bot.start();
+        await this.options.prepareHelper?.({ id, username: id, index });
+        return bot;
+      } catch (caught) {
+        lastError = caught;
+        bot.stop();
+        await bot.close();
+        if (attempt < 2) {
+          console.warn(`Retrying visible helper ${id} after its first connection attempt failed.`, caught);
+        }
+      }
+    }
+    throw new Error(`Could not spawn visible helper ${id} after two attempts.`, { cause: lastError });
   }
 
   private async spawnNext(requestedRole?: BotRole): Promise<SpawnedBot> {

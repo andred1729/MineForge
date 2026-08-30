@@ -47,7 +47,7 @@ export function agentManifest({
         preload: true,
         enableTools: ['@all'],
         requireApprovalForTools: canBuildComplexBlueprints
-          ? ['enable_creative_mode', 'spawn_build_helpers', 'begin_plan']
+          ? ['enable_creative_mode', 'spawn_build_helpers', 'begin_plan', 'begin_blueprint_plan']
           : ['begin_plan'],
       },
     ],

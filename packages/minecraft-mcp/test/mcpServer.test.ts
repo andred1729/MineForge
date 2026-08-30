@@ -86,6 +86,7 @@ describe('Minecraft MCP server', () => {
       'enable_creative_mode',
       'spawn_build_helpers',
       'begin_plan',
+      'begin_blueprint_plan',
       'move_to',
       'gather_blocks',
       'harvest_tree',
@@ -432,7 +433,7 @@ describe('Minecraft MCP server', () => {
       });
       const begun = TextResultSchema.parse(
         await client.callTool({
-          name: 'begin_plan',
+          name: 'begin_blueprint_plan',
           arguments: {
             summary: 'Build the approved villa',
             steps: ['Execute its deterministic batch'],
