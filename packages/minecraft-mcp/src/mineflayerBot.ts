@@ -1355,12 +1355,16 @@ export class MineflayerBot implements MinecraftBotPort {
   }): Promise<void> {
     const bot = this.requireBot();
     for (const position of [...positions].reverse()) {
+      const allowStartOutsidePlan = !isPositionWithinPlanBounds({
+        plan,
+        position: integerPosition(bot.entity.position),
+      });
       await this.moveForBlueprintTarget({
         target: position,
         plan,
         signal,
         assertAuthorized,
-        allowStartOutsidePlan: true,
+        allowStartOutsidePlan,
       });
       const scaffold = bot.blockAt(position);
       if (scaffold === null) {

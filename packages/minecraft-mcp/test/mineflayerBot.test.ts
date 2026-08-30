@@ -389,7 +389,10 @@ describe('Mineflayer temporary scaffolding', () => {
     let chunkLoaded = false;
     let moveAttempts = 0;
     const blockAt = vi.fn(() => (chunkLoaded ? ({ name: 'air' } as ReturnType<Bot['blockAt']>) : null));
-    (subject as unknown as { bot: Bot }).bot = { blockAt } as unknown as Bot;
+    (subject as unknown as { bot: Bot }).bot = {
+      blockAt,
+      entity: { position: new Vec3(40, 64, 0) },
+    } as unknown as Bot;
     const internals = subject as unknown as {
       rollbackTemporaryScaffolds(input: { positions: Vec3[]; plan: Plan }): Promise<void>;
       moveForBlueprintTarget(input: { allowStartOutsidePlan?: boolean }): Promise<void>;
@@ -413,6 +416,38 @@ describe('Mineflayer temporary scaffolding', () => {
     expect(move).toHaveBeenCalledTimes(2);
     expect(move.mock.calls.every(call => call[0]?.allowStartOutsidePlan === true)).toBe(true);
     expect(blockAt).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps cleanup boundary enforcement when already inside the original plan', async () => {
+    const subject = new MineflayerBot({
+      host: '127.0.0.1',
+      port: 25565,
+      username: 'ForgeBot1',
+      version: '1.21.4',
+    });
+    (subject as unknown as { bot: Bot }).bot = {
+      blockAt: () => ({ name: 'air' }),
+      entity: { position: new Vec3(0, 64, 0) },
+    } as unknown as Bot;
+    const internals = subject as unknown as {
+      removeTemporaryScaffolds(input: {
+        positions: Vec3[];
+        plan: Plan;
+        signal: AbortSignal;
+        assertAuthorized: () => void;
+      }): Promise<void>;
+      moveForBlueprintTarget(input: { allowStartOutsidePlan?: boolean }): Promise<void>;
+    };
+    const move = vi.spyOn(internals, 'moveForBlueprintTarget').mockResolvedValue(undefined);
+
+    await internals.removeTemporaryScaffolds({
+      positions: [new Vec3(0, 64, 0)],
+      plan: buildPlan,
+      signal: new AbortController().signal,
+      assertAuthorized: () => undefined,
+    });
+
+    expect(move).toHaveBeenCalledWith(expect.objectContaining({ allowStartOutsidePlan: false }));
   });
 });
 
