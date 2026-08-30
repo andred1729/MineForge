@@ -351,7 +351,6 @@ export class WorkforceManager {
         onTurnCancelled: () => {
           actionQueue.cancelActive();
           planStore.invalidate();
-          actionQueue.cancelActive();
         },
       });
       await controller.start();

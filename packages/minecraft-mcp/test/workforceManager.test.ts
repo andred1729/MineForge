@@ -107,7 +107,12 @@ describe('Minecraft workforce manager', () => {
       stateDirectory: await temporaryDirectory(),
       provisioner: {
         ensureProvider: async () => undefined,
-        provisionBot: async ({ identity }) => ({ agentId: `agent-${identity.slug}`, sessionId: 'builder-session' }),
+        deleteSession: async () => undefined,
+        provisionBot: async ({ identity }) => ({
+          agentId: `agent-${identity.slug}`,
+          sessionId: 'builder-session',
+          createdSession: true,
+        }),
       },
       identities,
     });
