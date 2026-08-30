@@ -174,6 +174,136 @@ describe('Mineflayer navigation completion', () => {
   });
 });
 
+describe('Mineflayer temporary scaffolding', () => {
+  const buildPlan: Plan = {
+    id: 'build-plan',
+    summary: 'Build safely',
+    steps: ['Build'],
+    permittedActions: ['build'],
+    origin: { x: 0, y: 64, z: 0 },
+    additionalOrigins: [],
+    radiusBlocks: 32,
+    createdAt: 0,
+    expiresAt: Number.MAX_SAFE_INTEGER,
+  };
+
+  it('records each confirmed scaffold before a later column placement fails', async () => {
+    const subject = new MineflayerBot({
+      host: '127.0.0.1',
+      port: 25565,
+      username: 'ForgeBot1',
+      version: '1.21.4',
+    });
+    const scaffoldBlocks = new Set<string>();
+    const fakeBot = {
+      blockAt: (position: Vec3) => ({
+        name: scaffoldBlocks.has(position.toString()) ? 'scaffolding' : 'air',
+        position,
+      }),
+      equip: vi.fn(async () => undefined),
+      placeBlock: vi.fn(async (reference: { position: Vec3 }, face: Vec3) => {
+        const position = reference.position.plus(face);
+        if (position.y === 65) {
+          throw new Error('second scaffold failed');
+        }
+        scaffoldBlocks.add(position.toString());
+      }),
+      clearControlStates: vi.fn(),
+    } as unknown as Bot;
+    (subject as unknown as { bot: Bot }).bot = fakeBot;
+    const internals = subject as unknown as {
+      findPlacementReference(target: Vec3): { reference: { position: Vec3 }; face: Vec3 } | null;
+      moveForBlueprintTarget(): Promise<void>;
+      ensureBlueprintItem(): Promise<unknown>;
+      placeTemporaryScaffoldColumn(input: {
+        target: Vec3;
+        plan: Plan;
+        signal: AbortSignal;
+        assertAuthorized: () => void;
+        placedPositions: Vec3[];
+      }): Promise<void>;
+    };
+    vi.spyOn(internals, 'findPlacementReference').mockImplementation(target => {
+      if (target.y === 64 || (target.y === 65 && scaffoldBlocks.has(new Vec3(0, 64, 0).toString()))) {
+        return { reference: { position: target.offset(0, -1, 0) }, face: new Vec3(0, 1, 0) };
+      }
+      return null;
+    });
+    vi.spyOn(internals, 'moveForBlueprintTarget').mockResolvedValue(undefined);
+    vi.spyOn(internals, 'ensureBlueprintItem').mockResolvedValue({});
+    const placedPositions: Vec3[] = [];
+
+    await expect(
+      internals.placeTemporaryScaffoldColumn({
+        target: new Vec3(0, 66, 0),
+        plan: buildPlan,
+        signal: new AbortController().signal,
+        assertAuthorized: () => undefined,
+        placedPositions,
+      }),
+    ).rejects.toThrow('second scaffold failed');
+
+    expect(placedPositions.map(position => position.toString())).toEqual([new Vec3(0, 64, 0).toString()]);
+  });
+
+  it('rolls back partial scaffolds after cancellation without replacing the original failure', async () => {
+    const subject = new MineflayerBot({
+      host: '127.0.0.1',
+      port: 25565,
+      username: 'ForgeBot1',
+      version: '1.21.4',
+    });
+    const fakeBot = {
+      blockAt: () => ({ name: 'air' }),
+      creative: { stopFlying: vi.fn() },
+    } as unknown as Bot;
+    (subject as unknown as { bot: Bot }).bot = fakeBot;
+    const controller = new AbortController();
+    const scaffold = new Vec3(0, 64, 0);
+    const internals = subject as unknown as {
+      findPlacementReference(): null;
+      moveForBlueprintTarget(): Promise<void>;
+      placeTemporaryScaffoldColumn(input: { placedPositions: Vec3[] }): Promise<void>;
+      removeTemporaryScaffolds(input: {
+        positions: Vec3[];
+        signal: AbortSignal;
+        assertAuthorized: () => void;
+      }): Promise<void>;
+    };
+    vi.spyOn(internals, 'findPlacementReference').mockReturnValue(null);
+    vi.spyOn(internals, 'moveForBlueprintTarget').mockResolvedValue(undefined);
+    vi.spyOn(internals, 'placeTemporaryScaffoldColumn').mockImplementation(async input => {
+      input.placedPositions.push(scaffold);
+      controller.abort();
+      throw new Error('original scaffold cancellation');
+    });
+    const remove = vi.spyOn(internals, 'removeTemporaryScaffolds').mockImplementation(async input => {
+      expect(input.positions).toEqual([scaffold]);
+      expect(input.signal.aborted).toBe(false);
+      expect(() => input.assertAuthorized()).not.toThrow();
+      throw new Error('cleanup also failed');
+    });
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await expect(
+      subject.executeBlueprint({
+        origin: { x: 0, y: 64, z: 0 },
+        blocks: [{ dx: 0, dy: 2, dz: 0, block: 'stone' }],
+        plan: buildPlan,
+        signal: controller.signal,
+        assertAuthorized: () => undefined,
+      }),
+    ).rejects.toThrow('original scaffold cancellation');
+
+    expect(remove).toHaveBeenCalledOnce();
+    expect(warning).toHaveBeenCalledWith(
+      'Could not completely roll back temporary Minecraft scaffolding.',
+      expect.objectContaining({ message: 'cleanup also failed' }),
+    );
+    warning.mockRestore();
+  });
+});
+
 describe('Mineflayer tree-drop collection', () => {
   it('approaches a spawned item instead of requiring the mined block coordinate', async () => {
     const subject = new MineflayerBot({

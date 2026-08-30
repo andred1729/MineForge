@@ -1018,19 +1018,21 @@ export class MineflayerBot implements MinecraftBotPort {
             },
           });
         } else {
-          let temporaryScaffolds: Vec3[] = [];
-          let placement = this.findPlacementReference(target);
-          if (placement === null) {
-            temporaryScaffolds = await this.placeTemporaryScaffoldColumn({
-              target,
-              plan,
-              signal,
-              assertAuthorized,
-            });
-            await this.moveForBlueprintTarget({ target, plan, signal, assertAuthorized });
-            placement = this.findPlacementReference(target);
-          }
+          const temporaryScaffolds: Vec3[] = [];
+          let operationFailure: Error | undefined;
           try {
+            let placement = this.findPlacementReference(target);
+            if (placement === null) {
+              await this.placeTemporaryScaffoldColumn({
+                target,
+                plan,
+                signal,
+                assertAuthorized,
+                placedPositions: temporaryScaffolds,
+              });
+              await this.moveForBlueprintTarget({ target, plan, signal, assertAuthorized });
+              placement = this.findPlacementReference(target);
+            }
             if (placement === null) {
               throw new Error(`Temporary scaffolding could not support ${operation.block} at ${target.toString()}.`);
             }
@@ -1056,15 +1058,25 @@ export class MineflayerBot implements MinecraftBotPort {
               },
             });
             await waitForBlockName({ bot, target, expected: operation.block, signal });
-          } finally {
-            if (!signal.aborted && temporaryScaffolds.length > 0) {
-              await this.removeTemporaryScaffolds({
-                positions: temporaryScaffolds,
-                plan,
-                signal,
-                assertAuthorized,
-              });
+          } catch (caught) {
+            operationFailure = caught instanceof Error ? caught : new Error('Minecraft blueprint placement failed.');
+          }
+          let cleanupFailure: Error | undefined;
+          if (temporaryScaffolds.length > 0) {
+            try {
+              await this.rollbackTemporaryScaffolds({ positions: temporaryScaffolds, plan });
+            } catch (caught) {
+              cleanupFailure = caught instanceof Error ? caught : new Error('Temporary scaffold cleanup failed.');
+              if (operationFailure !== undefined) {
+                console.warn('Could not completely roll back temporary Minecraft scaffolding.', cleanupFailure);
+              }
             }
+          }
+          if (operationFailure !== undefined) {
+            throw operationFailure;
+          }
+          if (cleanupFailure !== undefined) {
+            throw cleanupFailure;
           }
         }
         completed += 1;
@@ -1209,12 +1221,14 @@ export class MineflayerBot implements MinecraftBotPort {
     plan,
     signal,
     assertAuthorized,
+    placedPositions,
   }: {
     target: Vec3;
     plan: Plan;
     signal: AbortSignal;
     assertAuthorized: () => void;
-  }): Promise<Vec3[]> {
+    placedPositions: Vec3[];
+  }): Promise<void> {
     const bot = this.requireBot();
     const descending: Vec3[] = [];
     let cursor = target.offset(0, -1, 0);
@@ -1236,7 +1250,8 @@ export class MineflayerBot implements MinecraftBotPort {
       cursor = cursor.offset(0, -1, 0);
     }
     const positions = descending.reverse();
-    if (positions.length === 0 || this.findPlacementReference(positions[0]!) === null) {
+    const foundation = positions[0];
+    if (foundation === undefined || this.findPlacementReference(foundation) === null) {
       throw new Error(`No scaffold foundation is available below ${target.toString()}.`);
     }
 
@@ -1248,19 +1263,41 @@ export class MineflayerBot implements MinecraftBotPort {
       }
       const item = await this.ensureBlueprintItem({ blockName: 'scaffolding', signal, assertAuthorized });
       assertAuthorized();
-      await runAbortable({
-        signal,
-        operation: async () => {
-          await bot.equip(item, 'hand');
-          await bot.placeBlock(placement.reference, placement.face);
-        },
-        stop: () => {
-          bot.clearControlStates();
-        },
-      });
-      await waitForBlockName({ bot, target: position, expected: 'scaffolding', signal });
+      try {
+        await runAbortable({
+          signal,
+          operation: async () => {
+            await bot.equip(item, 'hand');
+            await bot.placeBlock(placement.reference, placement.face);
+          },
+          stop: () => {
+            bot.clearControlStates();
+          },
+        });
+        await waitForBlockName({ bot, target: position, expected: 'scaffolding', signal });
+      } finally {
+        if (bot.blockAt(position)?.name === 'scaffolding' && !placedPositions.some(placed => placed.equals(position))) {
+          placedPositions.push(position.clone());
+        }
+      }
     }
-    return positions;
+  }
+
+  private async rollbackTemporaryScaffolds({ positions, plan }: { positions: Vec3[]; plan: Plan }): Promise<void> {
+    const cleanupController = new AbortController();
+    const cleanupTimeout = setTimeout(() => {
+      cleanupController.abort();
+    }, 5_000);
+    try {
+      await this.removeTemporaryScaffolds({
+        positions,
+        plan,
+        signal: cleanupController.signal,
+        assertAuthorized: () => undefined,
+      });
+    } finally {
+      clearTimeout(cleanupTimeout);
+    }
   }
 
   private async removeTemporaryScaffolds({
