@@ -1018,32 +1018,54 @@ export class MineflayerBot implements MinecraftBotPort {
             },
           });
         } else {
-          const item = await this.ensureBlueprintItem({ blockName: operation.block, signal, assertAuthorized });
-          assertAuthorized();
-          await runAbortable({
-            signal,
-            operation: async () => {
-              await bot.equip(item, 'hand');
-            },
-            stop: () => {
-              // Mineflayer exposes no equip cancellation; serialization waits for it to settle.
-            },
-          });
-          const placement = this.findPlacementReference(target);
+          let temporaryScaffolds: Vec3[] = [];
+          let placement = this.findPlacementReference(target);
           if (placement === null) {
-            throw new Error(`No supporting face is available to place ${operation.block} at ${target.toString()}.`);
+            temporaryScaffolds = await this.placeTemporaryScaffoldColumn({
+              target,
+              plan,
+              signal,
+              assertAuthorized,
+            });
+            await this.moveForBlueprintTarget({ target, plan, signal, assertAuthorized });
+            placement = this.findPlacementReference(target);
           }
-          assertAuthorized();
-          await runAbortable({
-            signal,
-            operation: async () => {
-              await bot.placeBlock(placement.reference, placement.face);
-            },
-            stop: () => {
-              bot.clearControlStates();
-            },
-          });
-          await waitForBlockName({ bot, target, expected: operation.block, signal });
+          try {
+            if (placement === null) {
+              throw new Error(`Temporary scaffolding could not support ${operation.block} at ${target.toString()}.`);
+            }
+            const item = await this.ensureBlueprintItem({ blockName: operation.block, signal, assertAuthorized });
+            assertAuthorized();
+            await runAbortable({
+              signal,
+              operation: async () => {
+                await bot.equip(item, 'hand');
+              },
+              stop: () => {
+                // Mineflayer exposes no equip cancellation; serialization waits for it to settle.
+              },
+            });
+            assertAuthorized();
+            await runAbortable({
+              signal,
+              operation: async () => {
+                await bot.placeBlock(placement.reference, placement.face);
+              },
+              stop: () => {
+                bot.clearControlStates();
+              },
+            });
+            await waitForBlockName({ bot, target, expected: operation.block, signal });
+          } finally {
+            if (!signal.aborted && temporaryScaffolds.length > 0) {
+              await this.removeTemporaryScaffolds({
+                positions: temporaryScaffolds,
+                plan,
+                signal,
+                assertAuthorized,
+              });
+            }
+          }
         }
         completed += 1;
         details.push(`${operation.block} at ${target.toString()}`);
@@ -1180,6 +1202,97 @@ export class MineflayerBot implements MinecraftBotPort {
       throw new Error(`Minecraft rejected the creative ${blockName} material stack.`);
     }
     return created;
+  }
+
+  private async placeTemporaryScaffoldColumn({
+    target,
+    plan,
+    signal,
+    assertAuthorized,
+  }: {
+    target: Vec3;
+    plan: Plan;
+    signal: AbortSignal;
+    assertAuthorized: () => void;
+  }): Promise<Vec3[]> {
+    const bot = this.requireBot();
+    const descending: Vec3[] = [];
+    let cursor = target.offset(0, -1, 0);
+    for (let depth = 0; depth < 16; depth += 1) {
+      if (!isPositionWithinPlanBounds({ plan, position: integerPosition(cursor) })) {
+        throw new Error('Temporary scaffolding would leave the approved plan radius.');
+      }
+      const existing = bot.blockAt(cursor);
+      if (existing === null) {
+        throw new Error(`Scaffold chunk is not loaded at ${cursor.toString()}.`);
+      }
+      if (existing.name !== 'air') {
+        throw new Error(`Temporary scaffolding is obstructed by ${existing.name} at ${cursor.toString()}.`);
+      }
+      descending.push(cursor.clone());
+      if (this.findPlacementReference(cursor) !== null) {
+        break;
+      }
+      cursor = cursor.offset(0, -1, 0);
+    }
+    const positions = descending.reverse();
+    if (positions.length === 0 || this.findPlacementReference(positions[0]!) === null) {
+      throw new Error(`No scaffold foundation is available below ${target.toString()}.`);
+    }
+
+    for (const position of positions) {
+      await this.moveForBlueprintTarget({ target: position, plan, signal, assertAuthorized });
+      const placement = this.findPlacementReference(position);
+      if (placement === null) {
+        throw new Error(`Scaffolding lost its supporting face at ${position.toString()}.`);
+      }
+      const item = await this.ensureBlueprintItem({ blockName: 'scaffolding', signal, assertAuthorized });
+      assertAuthorized();
+      await runAbortable({
+        signal,
+        operation: async () => {
+          await bot.equip(item, 'hand');
+          await bot.placeBlock(placement.reference, placement.face);
+        },
+        stop: () => {
+          bot.clearControlStates();
+        },
+      });
+      await waitForBlockName({ bot, target: position, expected: 'scaffolding', signal });
+    }
+    return positions;
+  }
+
+  private async removeTemporaryScaffolds({
+    positions,
+    plan,
+    signal,
+    assertAuthorized,
+  }: {
+    positions: Vec3[];
+    plan: Plan;
+    signal: AbortSignal;
+    assertAuthorized: () => void;
+  }): Promise<void> {
+    const bot = this.requireBot();
+    for (const position of [...positions].reverse()) {
+      const scaffold = bot.blockAt(position);
+      if (scaffold?.name !== 'scaffolding') {
+        continue;
+      }
+      await this.moveForBlueprintTarget({ target: position, plan, signal, assertAuthorized });
+      assertAuthorized();
+      await runAbortable({
+        signal,
+        operation: async () => {
+          await bot.dig(scaffold);
+        },
+        stop: () => {
+          bot.stopDigging();
+        },
+      });
+      await waitForBlockName({ bot, target: position, expected: 'air', signal });
+    }
   }
 
   async say(message: string): Promise<void> {
