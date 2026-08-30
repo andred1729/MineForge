@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0-rc.1
+
+### Patch Changes
+
+- de37f5a: Prevent external session synchronization from repeatedly reloading the thread list when existing sessions update.
+- 8bcedf6: Refresh the TrueForge console session list when an external controller creates or updates sessions.
+- af3f393: Add opt-in synchronization for externally created turns and enable it in the bundled TrueForge console.
+- Updated dependencies [648273b]
+  - @truefoundry/trueforge-sdk@0.1.4-rc.1
+
 ## 0.3.0-rc.0
 
 ### Minor Changes

@@ -1,4 +1,12 @@
+## [0.1.4-rc.1] - 2026-08-30
+
 ## [0.1.4-rc.0] - 2026-08-27
+
+## 0.1.4-rc.1
+
+### Patch Changes
+
+- 648273b: Regenerate SDK from updated OpenAPI spec.
 
 ## [0.1.3] - 2026-08-19
 

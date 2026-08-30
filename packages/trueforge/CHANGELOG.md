@@ -1,5 +1,21 @@
 # @truefoundry/trueforge
 
+## 0.2.0-rc.1
+
+### Minor Changes
+
+- a3a1395: Adds first-class cron schedules for existing agents: persist them, manage them via /api/v1/schedules, validate cron policy at write time, and advance due runs through a single-dispatcher claim path.
+
+### Patch Changes
+
+- a60f4c2: Add GET /api/v1/agents/{agent_id}/code-snippets with TypeScript TrueForge SDK stream and non-stream samples.
+- de37f5a: Prevent external session synchronization from repeatedly reloading the thread list when existing sessions update.
+- c40129c: Cap Daytona status-refresh calls at 1 minute so a stalled provider cannot hang request handlers.
+- 8bcedf6: Refresh the TrueForge console session list when an external controller creates or updates sessions.
+- af3f393: Add opt-in synchronization for externally created turns and enable it in the bundled TrueForge console.
+- Updated dependencies [c40129c]
+  - @truefoundry/trueforge-core@0.2.0-rc.1
+
 ## 0.2.0-rc.0
 
 ### Minor Changes
