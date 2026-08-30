@@ -1334,7 +1334,10 @@ export class MineflayerBot implements MinecraftBotPort {
     const bot = this.requireBot();
     for (const position of [...positions].reverse()) {
       const scaffold = bot.blockAt(position);
-      if (scaffold?.name !== 'scaffolding') {
+      if (scaffold === null) {
+        throw new Error(`Scaffold chunk is not loaded at ${position.toString()}.`);
+      }
+      if (scaffold.name !== 'scaffolding') {
         continue;
       }
       await this.moveForBlueprintTarget({ target: position, plan, signal, assertAuthorized });

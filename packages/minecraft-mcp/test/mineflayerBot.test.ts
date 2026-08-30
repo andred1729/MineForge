@@ -342,6 +342,33 @@ describe('Mineflayer temporary scaffolding', () => {
     await internals.rollbackTemporaryScaffolds({ positions: [], plan: buildPlan });
     expect(attempts).toEqual([second.toString()]);
   });
+
+  it('retains an unloaded scaffold position until its chunk can be checked', async () => {
+    const subject = new MineflayerBot({
+      host: '127.0.0.1',
+      port: 25565,
+      username: 'ForgeBot1',
+      version: '1.21.4',
+    });
+    let chunkLoaded = false;
+    const blockAt = vi.fn(() => (chunkLoaded ? ({ name: 'air' } as ReturnType<Bot['blockAt']>) : null));
+    (subject as unknown as { bot: Bot }).bot = { blockAt } as unknown as Bot;
+    const internals = subject as unknown as {
+      rollbackTemporaryScaffolds(input: { positions: Vec3[]; plan: Plan }): Promise<void>;
+    };
+    const scaffold = new Vec3(0, 64, 0);
+
+    await expect(
+      internals.rollbackTemporaryScaffolds({ positions: [scaffold], plan: buildPlan }),
+    ).rejects.toMatchObject({
+      message: 'Could not remove 1 temporary scaffold block(s); cleanup will retry before the next blueprint batch.',
+      cause: expect.objectContaining({ message: expect.stringContaining('Scaffold chunk is not loaded') }),
+    });
+
+    chunkLoaded = true;
+    await internals.rollbackTemporaryScaffolds({ positions: [], plan: buildPlan });
+    expect(blockAt).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('Mineflayer tree-drop collection', () => {
