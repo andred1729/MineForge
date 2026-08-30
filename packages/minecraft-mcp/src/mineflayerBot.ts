@@ -30,6 +30,7 @@ interface MineflayerBotOptions {
 const { goals, Movements, pathfinder } = pathfinderPlugin;
 const { mineflayer: startMineflayerViewer } = prismarineViewer;
 const BOT_SPAWN_TIMEOUT_MS = 15_000;
+const CONNECTION_THROTTLE_BACKOFF_MS = 5_000;
 
 function integerPosition(position: Vec3): Position {
   return {
@@ -85,6 +86,10 @@ export async function waitForBotSpawn(bot: Bot, username: string, timeoutMs = BO
     bot.once('kicked', handleKicked);
     bot.once('end', handleEnd);
   });
+}
+
+function isConnectionThrottled(caught: unknown): boolean {
+  return caught instanceof Error && caught.message.toLowerCase().includes('connection throttled');
 }
 
 function assertNotAborted(signal: AbortSignal): void {
@@ -255,38 +260,51 @@ export class MineflayerBot implements MinecraftBotPort {
       return;
     }
 
-    const bot = mineflayer.createBot({
-      host: this.options.host,
-      port: this.options.port,
-      username: this.options.username,
-      auth: 'offline',
-      version: this.options.version,
-    });
-    bot.loadPlugin(pathfinder);
-    bot.on('chat', (username, message) => {
-      for (const listener of this.chatListeners) {
-        listener({ username, message });
-      }
-    });
-    bot.on('error', error => {
-      console.warn(`${this.options.username} Minecraft connection error`, error);
-    });
-    this.bot = bot;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const bot = mineflayer.createBot({
+        host: this.options.host,
+        port: this.options.port,
+        username: this.options.username,
+        auth: 'offline',
+        version: this.options.version,
+      });
+      bot.loadPlugin(pathfinder);
+      bot.on('chat', (username, message) => {
+        for (const listener of this.chatListeners) {
+          listener({ username, message });
+        }
+      });
+      bot.on('error', error => {
+        console.warn(`${this.options.username} Minecraft connection error`, error);
+      });
+      this.bot = bot;
 
-    try {
-      await waitForBotSpawn(bot, this.options.username);
-      const movements = new Movements(bot);
-      // Pathfinding is navigation only. World mutation must happen through the
-      // explicitly authorized gather/build loops so it can be counted and stopped.
-      movements.canDig = false;
-      movements.allow1by1towers = false;
-      movements.scafoldingBlocks = [];
-      bot.pathfinder.setMovements(movements);
-    } catch (caught) {
-      this.bot = null;
-      bot.end('Connection failed');
-      throw new Error('Could not connect ForgeBot to Minecraft.', { cause: caught });
+      try {
+        await waitForBotSpawn(bot, this.options.username);
+        const movements = new Movements(bot);
+        // Pathfinding is navigation only. World mutation must happen through the
+        // explicitly authorized gather/build loops so it can be counted and stopped.
+        movements.canDig = false;
+        movements.allow1by1towers = false;
+        movements.scafoldingBlocks = [];
+        bot.pathfinder.setMovements(movements);
+        return;
+      } catch (caught) {
+        lastError = caught;
+        this.bot = null;
+        bot.end('Connection failed');
+        if (attempt < 2 && isConnectionThrottled(caught)) {
+          console.warn(`${this.options.username} was connection-throttled; retrying in 5 seconds.`);
+          await new Promise<void>(resolve => {
+            setTimeout(resolve, CONNECTION_THROTTLE_BACKOFF_MS);
+          });
+          continue;
+        }
+        break;
+      }
     }
+    throw new Error('Could not connect ForgeBot to Minecraft.', { cause: lastError });
   }
 
   close(): Promise<void> {
